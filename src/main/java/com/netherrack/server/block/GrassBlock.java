@@ -9,10 +9,7 @@ package com.netherrack.server.block;
 public class GrassBlock extends Block {
 
     public GrassBlock() {
-        // Hash exceeds Integer.MAX_VALUE as an unsigned value - the network field is a
-        // signed 32-bit int, so this is the same bit pattern via a long-to-int cast
-        // rather than a literal (3727763636 alone won't compile, it overflows int).
-        super("minecraft:grass_block", (int) 3727763636L);
+        super("minecraft:grass_block");
     }
 
     @Override

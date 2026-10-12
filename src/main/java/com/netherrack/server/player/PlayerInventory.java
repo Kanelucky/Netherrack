@@ -60,7 +60,7 @@ public class PlayerInventory {
     private static final int CRAFTING_SIZE = 4;
 
     /** The inventory screen's crafting grid is UI slots 28 to 31 (a crafting table's 3x3 grid starts at 32). */
-    private static final int CRAFTING_FIRST_SLOT = 28;
+    static final int CRAFTING_FIRST_SLOT = 28;
 
     /** How many requests' changes are remembered for later requests to refer back to. */
     private static final int RECENT_REQUESTS = 64;
@@ -232,6 +232,47 @@ public class PlayerInventory {
     /** What the player wears - helmet, chestplate, leggings, boots - for other players to see. */
     public synchronized List<ItemData> getArmor() {
         return List.of(armor);
+    }
+
+    /** Everything in the inventory at once, e.g. to save it. */
+    public synchronized Contents getContents() {
+        return new Contents(List.of(main), List.of(armor), offhand, cursor, List.of(crafting));
+    }
+
+    /**
+     * Fills the inventory with saved contents, as a returning player joins. What was on the
+     * cursor or in the crafting grid goes back into the main inventory, as closing the
+     * inventory screen would have done; what doesn't fit is thrown out.
+     */
+    public synchronized void restore(Contents contents) {
+        for (int i = 0; i < SIZE && i < contents.main().size(); i++) {
+            main[i] = restored(contents.main().get(i));
+        }
+        for (int i = 0; i < ARMOR_SIZE && i < contents.armor().size(); i++) {
+            armor[i] = restored(contents.armor().get(i));
+        }
+        offhand = restored(contents.offhand());
+        returnToMain(contents.cursor());
+        for (ItemData item : contents.crafting()) {
+            returnToMain(item);
+        }
+    }
+
+    /** A saved item with a network id of its own, as every stack in the inventory has. */
+    private ItemData restored(ItemData item) {
+        return item.isNull() ? ItemData.AIR : withCount(item, item.getCount(), nextNetId++);
+    }
+
+    /**
+     * Everything in an inventory.
+     *
+     * @param main     the 36 main slots, hotbar first
+     * @param armor    helmet, chestplate, leggings, boots
+     * @param cursor   what's being moved around on the inventory screen
+     * @param crafting the 2x2 crafting grid
+     */
+    public record Contents(List<ItemData> main, List<ItemData> armor, ItemData offhand, ItemData cursor,
+                           List<ItemData> crafting) {
     }
 
     private void remember(int requestId, List<Change> changes) {

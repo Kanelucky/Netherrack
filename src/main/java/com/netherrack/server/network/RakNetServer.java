@@ -110,7 +110,7 @@ public class RakNetServer {
      */
     private byte[] buildAdvertisement() {
         String motd = config.get("server-name", "Netherrack Server");
-        String levelName = config.get("level-name", "world");
+        String levelName = config.get("level-name", "Bedrock level");
         int maxPlayers = config.getInt("max-players", 20);
 
         String advertisement = new StringJoiner(";", "", ";")

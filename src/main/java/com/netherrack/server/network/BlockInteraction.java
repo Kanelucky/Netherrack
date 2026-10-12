@@ -120,7 +120,7 @@ public class BlockInteraction {
 
         // The block state the held item carries: e.g. which colour of wool, or a slab's half.
         ItemData held = player.getInventory().get(slot);
-        Block block = Blocks.of(VanillaData.get().placedBlock(held), held.getBlockDefinition().getRuntimeId());
+        Block block = Blocks.of(VanillaData.get().placedBlock(held));
         world.setBlock(target.getX(), target.getY(), target.getZ(), block);
         players.broadcastBlock(target, block);
         players.broadcastPlaceSound(player, center(target), block);
@@ -146,7 +146,7 @@ public class BlockInteraction {
                 || held.getDefinition().getRuntimeId() != packet.getItemInHand().getDefinition().getRuntimeId()) {
             return "the client holds something else";
         }
-        if (VanillaData.get().placedBlock(held) == null || held.getBlockDefinition() == null) {
+        if (VanillaData.get().placedBlock(held) == null) {
             return "the held item doesn't place a block";
         }
         if (!inWorld(target) || !withinReach(player, target)) {
@@ -172,7 +172,7 @@ public class BlockInteraction {
             return;
         }
         Block block = world.getBlock(position.getX(), position.getY(), position.getZ());
-        if (block == null) {
+        if (block == null || !block.isBreakable()) {
             return;
         }
         breaking = position;
@@ -191,7 +191,8 @@ public class BlockInteraction {
 
     private void breakBlock(Player player, Vector3i position) {
         Block block = world.getBlock(position.getX(), position.getY(), position.getZ());
-        if (block == null || !player.mayBuild() || !inWorld(position) || !withinReach(player, position)) {
+        if (block == null || !player.mayBuild() || !inWorld(position) || !withinReach(player, position)
+                || (!block.isBreakable() && !player.isCreative())) {
             Logger.debug(player.getUsername() + " could not break the block at " + position);
             stopBreaking();
             player.getSession().sendPacket(PlayerManager.blockUpdate(position, blockAt(position)));

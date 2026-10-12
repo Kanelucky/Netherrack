@@ -92,8 +92,11 @@ public final class VanillaData {
     private final List<ItemDefinition> itemDefinitions;
     private final DefinitionRegistry<ItemDefinition> itemRegistry;
     private final Map<Integer, Integer> maxStackByItem = new HashMap<>();
-    private final Map<Integer, String> placedBlockByItem = new HashMap<>();
+    private final Map<Integer, NbtMap> placedBlockByItem = new HashMap<>();
     private final Map<Integer, Integer> placedBlockHashByItem = new HashMap<>();
+    // Every block state known by its network hash, and each block's default state by name.
+    private final Map<Integer, NbtMap> blockStatesByHash = new HashMap<>();
+    private final Map<String, NbtMap> defaultBlockStates = new HashMap<>();
     private final List<CreativeItemGroup> creativeGroups = new ArrayList<>();
     private final List<CreativeItemData> creativeItems = new ArrayList<>();
     private final List<BlockPropertyData> dataDrivenBlocks = new ArrayList<>();
@@ -107,13 +110,28 @@ public final class VanillaData {
         this.itemDefinitions = toItemDefinitions(items);
         this.itemRegistry = SimpleDefinitionRegistry.<ItemDefinition>builder().addAll(itemDefinitions).build();
 
+        // Several palette entries share a name (one per combination of states); the first
+        // stands in as the default, unless the block's item says which state it places.
+        for (NbtMap state : blockPalette) {
+            blockStatesByHash.put(BlockStateHash.of(state), state);
+            defaultBlockStates.putIfAbsent(state.getString("name"), state);
+        }
         for (NbtMap item : items.getList("items", NbtType.COMPOUND)) {
             int id = item.getInt("id");
             maxStackByItem.put(id, item.getInt("max_stack"));
             NbtMap block = item.getCompound("block", null);
             if (block != null) {
-                placedBlockByItem.put(id, block.getString("name"));
-                placedBlockHashByItem.put(id, BlockStateHash.of(block));
+                int hash = BlockStateHash.of(block);
+                placedBlockByItem.put(id, block);
+                placedBlockHashByItem.put(id, hash);
+                blockStatesByHash.put(hash, block);
+                defaultBlockStates.put(block.getString("name"), block);
+            }
+        }
+        for (NbtMap item : creative.getList("items", NbtType.COMPOUND)) {
+            NbtMap block = item.getCompound("block", null);
+            if (block != null) {
+                blockStatesByHash.putIfAbsent(BlockStateHash.of(block), block);
             }
         }
         for (NbtMap group : creative.getList("groups", NbtType.COMPOUND)) {
@@ -202,9 +220,34 @@ public final class VanillaData {
         return maxStackByItem.getOrDefault(item.getDefinition().getRuntimeId(), 64);
     }
 
-    /** The identifier of the block an item places, or null if it isn't a block item. */
-    public String placedBlock(ItemData item) {
-        return placedBlockByItem.get(item.getDefinition().getRuntimeId());
+    /**
+     * The block state an item places ({"name", "states"}): the one the stack carries, such
+     * as which color of wool or a slab's half, or else the item's usual one. Null if it
+     * isn't a block item.
+     */
+    public NbtMap placedBlock(ItemData item) {
+        NbtMap usual = placedBlockByItem.get(item.getDefinition().getRuntimeId());
+        if (usual == null || item.getBlockDefinition() == null) {
+            return usual;
+        }
+        return blockStatesByHash.getOrDefault(item.getBlockDefinition().getRuntimeId(), usual);
+    }
+
+    /** The block state ({"name", "states"}) with this network hash, or null if it's none this version knows. */
+    public NbtMap blockState(int hash) {
+        return blockStatesByHash.get(hash);
+    }
+
+    /**
+     * A block's default state by its identifier, e.g. for the layers of a flat world, or
+     * just the name with no states if it's no block this version knows.
+     */
+    public NbtMap defaultBlockState(String name) {
+        NbtMap state = defaultBlockStates.get(name);
+        if (state != null) {
+            return state;
+        }
+        return NbtMap.builder().putString("name", name).putCompound("states", NbtMap.EMPTY).build();
     }
 
     public List<CreativeItemGroup> getCreativeGroups() {
