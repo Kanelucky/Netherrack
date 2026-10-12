@@ -15,6 +15,7 @@ import com.netherrack.server.player.GameModes;
 import com.netherrack.server.player.Permission;
 import com.netherrack.server.player.Permissions;
 import com.netherrack.server.player.Player;
+import com.netherrack.server.player.PlayerData;
 import com.netherrack.server.player.PlayerManager;
 import com.netherrack.server.setup.Lang;
 import com.netherrack.server.setup.SetupWizard;
@@ -234,7 +235,15 @@ public class Netherrack {
             autosave.shutdownNow();
         }
         Logger.info(Lang.current.get("server.saving_level", config.get("level-name", "world")));
+        savePlayers();
         world.close();
+    }
+
+    /** Saves every player still online, where they are and what they have. */
+    private void savePlayers() {
+        for (Player player : playerManager.getPlayers()) {
+            world.savePlayer(player.getUuid(), PlayerData.save(player));
+        }
     }
 
     /** Writes what's changed in the world every so often, so a crash loses little. */
@@ -246,6 +255,7 @@ public class Netherrack {
         });
         autosave.scheduleWithFixedDelay(() -> {
             try {
+                savePlayers();
                 int saved = world.save();
                 if (saved > 0) {
                     Logger.debug("Autosave wrote " + saved + " chunks.");

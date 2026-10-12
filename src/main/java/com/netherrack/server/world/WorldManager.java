@@ -2,7 +2,7 @@ package com.netherrack.server.world;
 
 import com.netherrack.server.setup.Lang;
 import com.netherrack.server.util.Logger;
-import com.netherrack.server.world.storage.ChunkStorage;
+import com.netherrack.server.world.storage.WorldStorage;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.nbt.NbtType;
 import org.cloudburstmc.protocol.bedrock.codec.v2193.Bedrock_v2193;
@@ -20,7 +20,7 @@ import java.util.List;
  * <ul>
  *   <li>level.dat: the world's settings (see LevelDat);</li>
  *   <li>levelname.txt: its name as players see it;</li>
- *   <li>db/: its chunks, in a LevelDB database (see ChunkStorage).</li>
+ *   <li>db/: its chunks, in a LevelDB database (see WorldStorage).</li>
  * </ul>
  * So a world folder from Bedrock Dedicated Server, or one exported from the game, can be
  * dropped in there, and a world Netherrack made opens in the game.
@@ -56,7 +56,7 @@ public class WorldManager {
             Logger.warn(Lang.current.get("server.generator_unsupported", generator.getId()));
         }
 
-        ChunkStorage storage = ChunkStorage.open(directory.resolve(DATABASE_DIRECTORY));
+        WorldStorage storage = WorldStorage.open(directory.resolve(DATABASE_DIRECTORY));
         return new World(displayName(directory, level, levelName), generator, storage, level);
     }
 

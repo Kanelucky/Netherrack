@@ -233,6 +233,11 @@ public final class VanillaData {
         return blockStatesByHash.getOrDefault(item.getBlockDefinition().getRuntimeId(), usual);
     }
 
+    /** The block state ({"name", "states"}) with this network hash, or null if it's none this version knows. */
+    public NbtMap blockState(int hash) {
+        return blockStatesByHash.get(hash);
+    }
+
     /**
      * A block's default state by its identifier, e.g. for the layers of a flat world, or
      * just the name with no states if it's no block this version knows.

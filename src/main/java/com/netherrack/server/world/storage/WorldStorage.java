@@ -19,22 +19,27 @@ import org.iq80.leveldb.impl.Iq80DBFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
- * A world's chunks, kept in its LevelDB database (the "db" folder of a world) exactly as
- * vanilla keeps them, so a world from Bedrock Dedicated Server or the game itself loads
- * here, and a world saved here opens in the game.
+ * A world's chunks and players, kept in its LevelDB database (the "db" folder of a world)
+ * exactly as vanilla keeps them, so a world from Bedrock Dedicated Server or the game
+ * itself loads here, and a world saved here opens in the game.
  * <p>
  * Each part of a chunk is its own record (see ChunkKeys): a version, the blocks of each
  * sub-chunk that isn't all air, the biomes, block entities, and others - entities,
  * scheduled ticks... - that Netherrack doesn't use but leaves as they are. Saving a chunk
  * only writes what changed, and all of it at once, so a crash midway keeps either the old
  * chunk or the new one.
+ * <p>
+ * Each player who has played on the server has a record too, "player_server_" and their
+ * UUID, holding them as a little-endian NBT compound.
  */
-public final class ChunkStorage implements Closeable {
+public final class WorldStorage implements Closeable {
 
     /** The chunk format version Netherrack writes, the same as vanilla 1.21 onwards. */
     private static final byte CHUNK_VERSION = 42;
@@ -52,18 +57,18 @@ public final class ChunkStorage implements Closeable {
 
     private final DB db;
 
-    private ChunkStorage(DB db) {
+    private WorldStorage(DB db) {
         this.db = db;
     }
 
     /** Opens the database in this folder, creating an empty one if there isn't one yet. */
-    public static ChunkStorage open(Path directory) throws IOException {
+    public static WorldStorage open(Path directory) throws IOException {
         Options options = new Options()
                 .createIfMissing(true)
                 // What vanilla writes: raw deflate. Records compressed as zlib, which older
                 // versions wrote, are read just the same.
                 .compressionType(CompressionType.ZLIB_RAW);
-        return new ChunkStorage(Iq80DBFactory.factory.open(directory.toFile(), options));
+        return new WorldStorage(Iq80DBFactory.factory.open(directory.toFile(), options));
     }
 
     /**
@@ -163,9 +168,39 @@ public final class ChunkStorage implements Closeable {
         }
     }
 
+    /** A player's saved data, or null if they've never played in this world. */
+    public NbtMap loadPlayer(UUID uuid) throws IOException {
+        byte[] record = db.get(playerKey(uuid));
+        if (record == null) {
+            return null;
+        }
+        try {
+            List<NbtMap> compounds = readCompounds(record);
+            if (compounds.size() != 1) {
+                throw new IOException("expected one compound, found " + compounds.size());
+            }
+            return compounds.get(0);
+        } catch (RuntimeException e) {
+            throw new IOException(e.getMessage(), e);
+        }
+    }
+
+    public void savePlayer(UUID uuid, NbtMap data) throws IOException {
+        try {
+            db.put(playerKey(uuid), writeCompounds(List.of(data)));
+        } catch (RuntimeException e) {
+            throw new IOException(e.getMessage(), e);
+        }
+    }
+
     @Override
     public void close() throws IOException {
         db.close();
+    }
+
+    /** "player_server_" and the UUID, lower case with hyphens, as vanilla names player records. */
+    private static byte[] playerKey(UUID uuid) {
+        return ("player_server_" + uuid).getBytes(StandardCharsets.UTF_8);
     }
 
     private static List<NbtMap> readCompounds(byte[] bytes) throws IOException {

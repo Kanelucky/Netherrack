@@ -2,23 +2,25 @@ package com.netherrack.server.world;
 
 import com.netherrack.server.block.Block;
 import com.netherrack.server.util.Logger;
-import com.netherrack.server.world.storage.ChunkStorage;
+import com.netherrack.server.world.storage.WorldStorage;
 import org.cloudburstmc.nbt.NbtMap;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * A single world/dimension. Chunks are loaded the first time they're asked for: from the
  * world's storage if it has them, otherwise from the generator. They stay in memory from
  * then on, and {@link #save()} writes whatever has changed in them back to the storage.
+ * The world's storage also keeps each player's data, see {@link #loadPlayer}.
  */
 public class World {
 
     private final String name;
     private final WorldGenerator generator;
-    private final ChunkStorage storage;
+    private final WorldStorage storage;
     private final int spawnX;
     private final Integer spawnY;
     private final int spawnZ;
@@ -33,7 +35,7 @@ public class World {
      * @param storage where the world's chunks are saved, or null to keep them in memory only
      * @param level   the world's level.dat, for its spawn point, terrain type and seed
      */
-    public World(String name, WorldGenerator generator, ChunkStorage storage, NbtMap level) {
+    public World(String name, WorldGenerator generator, WorldStorage storage, NbtMap level) {
         this.name = name;
         this.generator = generator;
         this.storage = storage;
@@ -115,6 +117,35 @@ public class World {
             }
         }
         return saved;
+    }
+
+    /**
+     * What was saved of the player with this UUID, or null if they're new here. Data that
+     * can't be read counts as new, so they start afresh, and it's replaced when they're saved.
+     */
+    public NbtMap loadPlayer(UUID uuid) {
+        if (storage == null || closed) {
+            return null;
+        }
+        try {
+            return storage.loadPlayer(uuid);
+        } catch (IOException e) {
+            Logger.error("Could not read the saved data of player " + uuid + " in \"" + name
+                    + "\", so they start afresh: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /** Saves a player's data, as made by PlayerData. Does nothing once the world is closed. */
+    public synchronized void savePlayer(UUID uuid, NbtMap data) {
+        if (storage == null || closed) {
+            return;
+        }
+        try {
+            storage.savePlayer(uuid, data);
+        } catch (IOException e) {
+            Logger.error("Could not save player " + uuid + " in \"" + name + "\": " + e.getMessage());
+        }
     }
 
     /** Saves the world and closes its storage. Anything changed afterwards isn't saved. */

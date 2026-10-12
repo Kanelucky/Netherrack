@@ -56,6 +56,7 @@ public class Player {
     private volatile Vector3f position;
     private volatile Vector3f rotation = Vector3f.ZERO;
     private volatile boolean sneaking;
+    private volatile int selectedSlot;
     private volatile GameType gameMode;
     private volatile Permission permission = Permission.MEMBER;
     private volatile int commandLevel;
@@ -269,6 +270,17 @@ public class Player {
 
     public void setSneaking(boolean sneaking) {
         this.sneaking = sneaking;
+    }
+
+    /** Which hotbar slot (0-8) the player has selected. */
+    public int getSelectedSlot() {
+        return selectedSlot;
+    }
+
+    public void setSelectedSlot(int selectedSlot) {
+        if (selectedSlot >= 0 && selectedSlot < PlayerInventory.HOTBAR_SIZE) {
+            this.selectedSlot = selectedSlot;
+        }
     }
 
     public void setLocation(Vector3f position, Vector3f rotation) {

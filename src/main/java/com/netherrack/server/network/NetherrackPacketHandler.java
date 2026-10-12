@@ -8,6 +8,7 @@ import com.netherrack.server.entity.EntityIds;
 import com.netherrack.server.entity.ItemEntities;
 import com.netherrack.server.player.Permission;
 import com.netherrack.server.player.Player;
+import com.netherrack.server.player.PlayerData;
 import com.netherrack.server.player.PlayerInventory;
 import com.netherrack.server.player.PlayerManager;
 import com.netherrack.server.player.SkinParser;
@@ -23,6 +24,7 @@ import org.cloudburstmc.protocol.bedrock.codec.v2193.Bedrock_v2193;
 import org.cloudburstmc.protocol.bedrock.data.AuthoritativeMovementMode;
 import org.cloudburstmc.protocol.bedrock.data.ChatRestrictionLevel;
 import org.cloudburstmc.protocol.bedrock.data.EduSharedUriResource;
+import org.cloudburstmc.protocol.bedrock.data.GameType;
 import org.cloudburstmc.protocol.bedrock.data.GamePublishSetting;
 import org.cloudburstmc.protocol.bedrock.data.AttributeData;
 import org.cloudburstmc.protocol.bedrock.data.BuildPlatform;
@@ -33,6 +35,7 @@ import org.cloudburstmc.protocol.bedrock.data.command.CommandOriginData;
 import org.cloudburstmc.protocol.bedrock.data.PlayerAuthInputData;
 import org.cloudburstmc.protocol.bedrock.data.SpawnBiomeType;
 import org.cloudburstmc.protocol.bedrock.data.WorldType;
+import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerId;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerSlotType;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerType;
 import org.cloudburstmc.protocol.bedrock.data.inventory.FullContainerName;
@@ -66,6 +69,7 @@ import org.cloudburstmc.protocol.bedrock.packet.ItemStackRequestPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ItemStackResponsePacket;
 import org.cloudburstmc.protocol.bedrock.packet.JigsawStructureDataPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LevelChunkPacket;
+import org.cloudburstmc.protocol.bedrock.packet.MobEquipmentPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkChunkPublisherUpdatePacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkSettingsPacket;
@@ -73,6 +77,7 @@ import org.cloudburstmc.protocol.bedrock.packet.PlayerActionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ServerToClientHandshakePacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
+import org.cloudburstmc.protocol.bedrock.packet.PlayerHotbarPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RequestChunkRadiusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RequestNetworkSettingsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackClientResponsePacket;
@@ -298,21 +303,38 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
     }
 
     private void completeLogin() {
-        // There's no player data storage yet, so every login is treated as a new profile.
-        Logger.info("Player data not found for \"" + uuid + "\", creating new profile");
+        // Players are saved by the UUID their login gives them, which stays the same for
+        // an Xbox Live account.
+        NbtMap data = world.loadPlayer(UUID.fromString(uuid));
+        PlayerData.Saved saved = data != null ? PlayerData.read(data) : null;
+        if (saved == null) {
+            Logger.info("Player data not found for \"" + uuid + "\", creating new profile");
+        }
 
-        // A little way from the world's spawn point, standing on whatever is there. The
-        // chunks sent once the client asks for them are the ones around this spot.
-        double spawnX = world.getSpawnX() + ThreadLocalRandom.current().nextDouble(-6, 6);
-        double spawnZ = world.getSpawnZ() + ThreadLocalRandom.current().nextDouble(-6, 6);
-        int spawnY = world.findSpawnY((int) Math.floor(spawnX), (int) Math.floor(spawnZ));
-        spawnPosition = Vector3f.from(spawnX, spawnY + Player.EYE_HEIGHT, spawnZ);
+        if (saved != null && saved.position() != null) {
+            spawnPosition = saved.position();
+        } else {
+            // A little way from the world's spawn point, standing on whatever is there. The
+            // chunks sent once the client asks for them are the ones around this spot.
+            double spawnX = world.getSpawnX() + ThreadLocalRandom.current().nextDouble(-6, 6);
+            double spawnZ = world.getSpawnZ() + ThreadLocalRandom.current().nextDouble(-6, 6);
+            int spawnY = world.findSpawnY((int) Math.floor(spawnX), (int) Math.floor(spawnZ));
+            spawnPosition = Vector3f.from(spawnX, spawnY + Player.EYE_HEIGHT, spawnZ);
 
-        Logger.info("Player " + username + " cannot find the saved spawnpoint, reset the spawnpoint to "
-                + spawnX + " " + spawnY + ".0 " + spawnZ + " / " + world.getName());
+            Logger.info("Player " + username + " cannot find the saved spawnpoint, reset the spawnpoint to "
+                    + spawnX + " " + spawnY + ".0 " + spawnZ + " / " + world.getName());
+        }
 
+        GameType gameMode = saved != null && saved.gameMode() != null ? saved.gameMode() : netherrack.getDefaultGameMode();
         player = new Player(session, username, UUID.fromString(uuid), xuid, runtimeEntityId,
-                skin, deviceId, buildPlatform, spawnPosition, netherrack.getDefaultGameMode());
+                skin, deviceId, buildPlatform, spawnPosition, gameMode);
+        if (saved != null) {
+            if (saved.position() != null) {
+                player.setLocation(saved.position(), saved.rotation());
+            }
+            player.setSelectedSlot(saved.selectedSlot());
+            player.getInventory().restore(saved.inventory());
+        }
         // From permissions.json by XUID; players not signed into Xbox Live get the default.
         Permission permission = netherrack.getPermissions().of(xuid);
         player.setPermission(permission, netherrack.commandLevelFor(permission));
@@ -414,8 +436,14 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         // The commands their client suggests as they type "/": those their level allows.
         session.sendPacket(AvailableCommands.forLevel(netherrack.getCommandManager(), player.getCommandLevel()));
 
-        // An empty inventory, until there's player data to load one from.
+        // Their inventory as they left it, or empty for a new player - and the hotbar slot
+        // they had selected.
         sendInventory();
+        PlayerHotbarPacket hotbar = new PlayerHotbarPacket();
+        hotbar.setContainerId(ContainerId.INVENTORY);
+        hotbar.setSelectedHotbarSlot(player.getSelectedSlot());
+        hotbar.setSelectHotbarSlot(true);
+        session.sendPacket(hotbar);
     }
 
     /** Shows the client its whole inventory as the server has it. */
@@ -712,10 +740,22 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         return PacketSignal.HANDLED;
     }
 
+    /** The client says which hotbar slot the player has switched to. */
+    @Override
+    public PacketSignal handle(MobEquipmentPacket packet) {
+        if (player != null && packet.getContainerId() == ContainerId.INVENTORY) {
+            player.setSelectedSlot(packet.getHotbarSlot());
+        }
+        return PacketSignal.HANDLED;
+    }
+
     /** Called once the connection has closed, for whatever reason. */
     public void onDisconnect() {
         if (player != null) {
             blockInteraction.stopBreaking();
+            // Saved before they leave the player list: stopping the server saves everyone
+            // still on it, so whoever is leaving at that moment is saved one way or the other.
+            world.savePlayer(player.getUuid(), PlayerData.save(player));
             players.leave(player);
         }
     }
@@ -763,7 +803,7 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         startGame.setRuntimeEntityId(runtimeEntityId);
         startGame.setPlayerGameType(player.getGameMode());
         startGame.setPlayerPosition(spawnPosition);
-        startGame.setRotation(Vector2f.from(0, 0));
+        startGame.setRotation(Vector2f.from(player.getRotation().getX(), player.getRotation().getY()));
 
         startGame.setSeed(world.getSeed());
         startGame.setSpawnBiomeType(SpawnBiomeType.DEFAULT);
