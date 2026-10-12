@@ -3,6 +3,7 @@ package com.netherrack.server.world;
 import com.netherrack.server.block.Block;
 import com.netherrack.server.util.Logger;
 import com.netherrack.server.world.storage.WorldStorage;
+import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.nbt.NbtMap;
 
 import java.io.IOException;
@@ -75,15 +76,16 @@ public class World {
     }
 
     /**
-     * The y a player arriving at x, z stands at: on top of the highest block there. Where
-     * there's nothing at all, the world's own spawn height, or failing that the generator's.
+     * The world spawn: the block new players appear in, standing in the middle of it. Its
+     * height is level.dat's if that has one, or else on top of the highest block there -
+     * vanilla saves 32767 until it has worked the height out.
      */
-    public int findSpawnY(int x, int z) {
-        Integer top = getChunk(x >> 4, z >> 4).getHighestBlockY(x & 15, z & 15);
-        if (top != null) {
-            return top + 1;
+    public Vector3i getSpawn() {
+        if (spawnY != null) {
+            return Vector3i.from(spawnX, spawnY, spawnZ);
         }
-        return spawnY != null ? spawnY : generator.getSpawnY();
+        Integer top = getChunk(spawnX >> 4, spawnZ >> 4).getHighestBlockY(spawnX & 15, spawnZ & 15);
+        return Vector3i.from(spawnX, top != null ? top + 1 : generator.getSpawnY(), spawnZ);
     }
 
     public Chunk getChunk(int chunkX, int chunkZ) {

@@ -314,15 +314,13 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         if (saved != null && saved.position() != null) {
             spawnPosition = saved.position();
         } else {
-            // A little way from the world's spawn point, standing on whatever is there. The
-            // chunks sent once the client asks for them are the ones around this spot.
-            double spawnX = world.getSpawnX() + ThreadLocalRandom.current().nextDouble(-6, 6);
-            double spawnZ = world.getSpawnZ() + ThreadLocalRandom.current().nextDouble(-6, 6);
-            int spawnY = world.findSpawnY((int) Math.floor(spawnX), (int) Math.floor(spawnZ));
-            spawnPosition = Vector3f.from(spawnX, spawnY + Player.EYE_HEIGHT, spawnZ);
-
-            Logger.info("Player " + username + " cannot find the saved spawnpoint, reset the spawnpoint to "
-                    + spawnX + " " + spawnY + ".0 " + spawnZ + " / " + world.getName());
+            // In the middle of the world spawn's block, as vanilla puts new players. The chunks
+            // sent once the client asks for them are the ones around this spot.
+            if (saved != null) {
+                Logger.info(username + "'s saved position is outside the world, so they start at the world spawn.");
+            }
+            Vector3i spawn = world.getSpawn();
+            spawnPosition = Vector3f.from(spawn.getX() + 0.5, spawn.getY() + Player.EYE_HEIGHT, spawn.getZ() + 0.5);
         }
 
         GameType gameMode = saved != null && saved.gameMode() != null ? saved.gameMode() : netherrack.getDefaultGameMode();
@@ -812,7 +810,7 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         startGame.setGeneratorId(world.getGeneratorType());
         startGame.setLevelGameType(netherrack.getDefaultGameMode());
         startGame.setDifficulty(1);
-        startGame.setDefaultSpawn(Vector3i.from(spawnPosition.getFloorX(), spawnPosition.getFloorY(), spawnPosition.getFloorZ()));
+        startGame.setDefaultSpawn(world.getSpawn());
         startGame.setAchievementsDisabled(true);
         startGame.setDayCycleStopTime(0);
         startGame.setEduEditionOffers(0);

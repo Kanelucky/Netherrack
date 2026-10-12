@@ -50,17 +50,20 @@ public class WorldManager {
         Path levelDat = directory.resolve(LEVEL_DAT);
 
         NbtMap level;
+        WorldGenerator generator;
         if (Files.exists(levelDat)) {
             level = LevelDat.read(levelDat);
+            generator = generatorFor(level);
         } else {
             Logger.warn(Lang.current.get("server.level_not_found", levelName));
             level = newLevel(levelName, newLevelLayers());
+            generator = generatorFor(level);
+            level = withSpawnHeight(level, generator);
             Files.createDirectories(directory);
             LevelDat.write(levelDat, level);
             Files.writeString(directory.resolve(LEVEL_NAME_FILE), levelName, StandardCharsets.UTF_8);
         }
 
-        WorldGenerator generator = generatorFor(level);
         Logger.info(Lang.current.get("server.loading_level", levelName, generator.getId()));
         if (generator instanceof EmptyGenerator) {
             Logger.warn(Lang.current.get("server.generator_unsupported", generator.getId()));
@@ -113,7 +116,7 @@ public class WorldManager {
                 // Infinite worlds the game makes have flat layers saved too: Classic Flat's.
                 .putString("FlatWorldLayers", (flat != null ? flat : FlatPreset.CLASSIC_FLAT).toJson())
                 .putInt("SpawnX", 0)
-                .putInt("SpawnY", Short.MAX_VALUE) // "find the ground", as vanilla saves it
+                .putInt("SpawnY", Short.MAX_VALUE) // "find the ground", until withSpawnHeight has
                 .putInt("SpawnZ", 0)
                 .putLong("RandomSeed", new Random().nextLong()) // as the game picks one, flat or not
                 .putLong("Time", 0L)
@@ -125,6 +128,21 @@ public class WorldManager {
                 .putByte("immutableWorld", (byte) 0)
                 .putByte("isCreatedInEditor", (byte) 0)
                 .build();
+    }
+
+    /**
+     * A new level's spawn point with its height worked out: standing on the highest block at
+     * the spawn's x and z, so new players appear on the ground. With nothing there at all
+     * (terrain Netherrack can't generate), it's left as "find the ground" for the game to
+     * work out if the world is opened there.
+     */
+    private static NbtMap withSpawnHeight(NbtMap level, WorldGenerator generator) {
+        int x = level.getInt("SpawnX", 0);
+        int z = level.getInt("SpawnZ", 0);
+        Chunk chunk = new Chunk(x >> 4, z >> 4, generator.getBiome());
+        generator.generate(chunk);
+        Integer top = chunk.getHighestBlockY(x & 15, z & 15);
+        return top == null ? level : level.toBuilder().putInt("SpawnY", top + 1).build();
     }
 
     /** The game version as level.dat lists it: e.g. 1.26.50 is [1, 26, 50, 0, 0]. */
