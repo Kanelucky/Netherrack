@@ -83,6 +83,11 @@ public class Block {
         return 1;
     }
 
+    /** Whether it can be broken outside creative mode - not so for a hardness below 0, like bedrock's. */
+    public boolean isBreakable() {
+        return getHardness() >= 0;
+    }
+
     /** Whether breaking it by hand is the slow, no-drop kind (e.g. stone without a pickaxe). */
     public boolean requiresTool() {
         return false;

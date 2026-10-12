@@ -23,18 +23,10 @@ import java.util.Map;
  */
 public class FlatGenerator implements WorldGenerator {
 
-    /**
-     * Netherrack's own flat world: a single layer of grass blocks at y 4, with nothing
-     * underneath (air layers up to it).
-     */
-    public static final String DEFAULT_LAYERS = "{\"biome_id\":1,\"block_layers\":["
-            + "{\"block_name\":\"minecraft:air\",\"count\":68},"
-            + "{\"block_name\":\"minecraft:grass_block\",\"count\":1}"
-            + "],\"encoding_version\":6,\"structure_options\":null,\"world_version\":\"version.post_1_18\"}";
-
     private final List<Block> layers = new ArrayList<>();
     private final int bottomY;
     private final int biome;
+    private final String presetId;
 
     /** @throws IllegalArgumentException if the layers can't be read */
     public FlatGenerator(String layersJson) {
@@ -46,6 +38,7 @@ public class FlatGenerator implements WorldGenerator {
         }
         this.bottomY = "version.post_1_18".equals(json.get("world_version")) ? Chunk.MIN_Y : 0;
         this.biome = json.get("biome_id") instanceof Number id ? id.intValue() : 1;
+        this.presetId = json.get("preset_id") instanceof String id ? id : null;
 
         if (!(json.get("block_layers") instanceof List<?> blockLayers)) {
             throw new IllegalArgumentException("the flat world layers have no \"block_layers\"");
@@ -63,9 +56,10 @@ public class FlatGenerator implements WorldGenerator {
         }
     }
 
+    /** "flat", and which of the game's presets the layers are, if they say. */
     @Override
     public String getId() {
-        return "flat";
+        return presetId != null ? "flat, " + presetId : "flat";
     }
 
     @Override

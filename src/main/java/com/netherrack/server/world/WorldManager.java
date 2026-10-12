@@ -1,5 +1,6 @@
 package com.netherrack.server.world;
 
+import com.netherrack.server.ServerConfig;
 import com.netherrack.server.setup.Lang;
 import com.netherrack.server.util.Logger;
 import com.netherrack.server.world.storage.WorldStorage;
@@ -13,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 /**
  * Opens a world from disk, or creates a brand new one if it doesn't exist yet. Worlds are
@@ -33,6 +35,14 @@ public class WorldManager {
     private static final String LEVEL_DAT = "level.dat";
     private static final String LEVEL_NAME_FILE = "levelname.txt";
     private static final String DATABASE_DIRECTORY = "db";
+    private static final char BYTE_ORDER_MARK = 0xFEFF;
+
+    private final ServerConfig config;
+
+    /** @param config where a new level's type and flat world preset come from */
+    public WorldManager(ServerConfig config) {
+        this.config = config;
+    }
 
     /** @throws IOException if the world can't be read, or a new one can't be written */
     public World loadOrCreate(String levelName) throws IOException {
@@ -44,7 +54,7 @@ public class WorldManager {
             level = LevelDat.read(levelDat);
         } else {
             Logger.warn(Lang.current.get("server.level_not_found", levelName));
-            level = newLevel(levelName);
+            level = newLevel(levelName, newLevelLayers());
             Files.createDirectories(directory);
             LevelDat.write(levelDat, level);
             Files.writeString(directory.resolve(LEVEL_NAME_FILE), levelName, StandardCharsets.UTF_8);
@@ -61,10 +71,34 @@ public class WorldManager {
     }
 
     /**
-     * The level.dat of a new world: Netherrack's flat world. Vanilla fills in anything it
-     * needs that isn't here (game rules and the like) when it opens the world.
+     * The flat world layers a new level gets from server.properties, or null for generated
+     * terrain. level-type picks between the two ("default" when it isn't set, as on Bedrock
+     * Dedicated Server), and flat-world-preset picks the layers of a flat one.
      */
-    private static NbtMap newLevel(String levelName) {
+    private FlatPreset newLevelLayers() {
+        String type = config.get("level-type", "default").trim();
+        if (type.equalsIgnoreCase("default")) {
+            return null;
+        }
+        if (!type.equalsIgnoreCase("flat")) {
+            Logger.warn("Unknown level-type \"" + type + "\" in server.properties, so the new level is flat."
+                    + " Expected flat or default.");
+        }
+        String presetName = config.get("flat-world-preset", FlatPreset.CLASSIC_FLAT.getSettingName());
+        FlatPreset preset = FlatPreset.fromName(presetName);
+        if (preset == null) {
+            Logger.warn("Unknown flat-world-preset \"" + presetName + "\" in server.properties, so the new level is "
+                    + FlatPreset.CLASSIC_FLAT.getSettingName() + ".");
+            return FlatPreset.CLASSIC_FLAT;
+        }
+        return preset;
+    }
+
+    /**
+     * The level.dat of a new world, flat with these layers or else infinite. Vanilla fills
+     * in anything it needs that isn't here (game rules and the like) when it opens the world.
+     */
+    private static NbtMap newLevel(String levelName, FlatPreset flat) {
         List<Integer> version = gameVersion();
         return NbtMap.builder()
                 .putString("LevelName", levelName)
@@ -75,12 +109,13 @@ public class WorldManager {
                 .putString("InventoryVersion", Bedrock_v2193.CODEC.getMinecraftVersion())
                 .putInt("WorldVersion", 1) // made since 1.18: y -64 to 319
                 .putInt("GameType", 0) // survival
-                .putInt("Generator", 2) // flat
-                .putString("FlatWorldLayers", FlatGenerator.DEFAULT_LAYERS)
+                .putInt("Generator", flat != null ? 2 : 1) // flat or infinite
+                // Infinite worlds the game makes have flat layers saved too: Classic Flat's.
+                .putString("FlatWorldLayers", (flat != null ? flat : FlatPreset.CLASSIC_FLAT).toJson())
                 .putInt("SpawnX", 0)
                 .putInt("SpawnY", Short.MAX_VALUE) // "find the ground", as vanilla saves it
                 .putInt("SpawnZ", 0)
-                .putLong("RandomSeed", 0L)
+                .putLong("RandomSeed", flat != null ? 0L : new Random().nextLong())
                 .putLong("Time", 0L)
                 .putLong("currentTick", 0L)
                 .putLong("LastPlayed", System.currentTimeMillis() / 1000L)
@@ -120,10 +155,7 @@ public class WorldManager {
         String layers = level.getString("FlatWorldLayers", "");
         if (layers.isBlank()) {
             // Vanilla's own flat world, for a flat world that doesn't say which layers it has.
-            layers = "{\"biome_id\":1,\"block_layers\":[{\"block_name\":\"minecraft:bedrock\",\"count\":1},"
-                    + "{\"block_name\":\"minecraft:dirt\",\"count\":2},{\"block_name\":\"minecraft:grass_block\","
-                    + "\"count\":1}],\"encoding_version\":6,\"structure_options\":null,"
-                    + "\"world_version\":\"version.post_1_18\"}";
+            layers = FlatPreset.CLASSIC_FLAT.toJson();
         }
         try {
             return new FlatGenerator(layers);
@@ -137,7 +169,8 @@ public class WorldManager {
     private static String displayName(Path directory, NbtMap level, String levelName) {
         try {
             String text = Files.readString(directory.resolve(LEVEL_NAME_FILE), StandardCharsets.UTF_8);
-            String name = text.replace("﻿", "").lines().findFirst().orElse("").trim();
+            // Vanilla writes the name alone; a byte order mark or a newline after it is tolerated.
+            String name = text.replace(String.valueOf(BYTE_ORDER_MARK), "").lines().findFirst().orElse("").trim();
             if (!name.isEmpty()) {
                 return name;
             }

@@ -59,7 +59,7 @@ public class Netherrack {
     public Netherrack() {
         this.config = new ServerConfig(Path.of("server.properties"));
         this.rakNetServer = new RakNetServer(config);
-        this.worldManager = new WorldManager();
+        this.worldManager = new WorldManager(config);
 
         this.commandManager = new CommandManager();
         commandManager.register(new StopCommand());
@@ -148,14 +148,15 @@ public class Netherrack {
 
         permissions = Permissions.load(Permissions.FILE, defaultPermission());
 
-        NettyLogBridge.setDebug(config.getBoolean("debug", false));
+        // "debug" is what the setting was called before, so older files still work.
+        NettyLogBridge.setDebug(config.getBoolean("debug-logs", config.getBoolean("debug", false)));
         if (NettyLogBridge.isDebug()) {
             Logger.warn(lang.get("server.debug_enabled"));
         }
 
         String ip = config.get("server-ip", "0.0.0.0");
         int port = config.getInt("server-port", 19132);
-        String levelName = config.get("level-name", "world");
+        String levelName = config.get("level-name", "Bedrock level");
         int maxPlayers = config.getInt("max-players", 20);
 
         sleep(150);
@@ -234,7 +235,7 @@ public class Netherrack {
         if (autosave != null) {
             autosave.shutdownNow();
         }
-        Logger.info(Lang.current.get("server.saving_level", config.get("level-name", "world")));
+        Logger.info(Lang.current.get("server.saving_level", config.get("level-name", "Bedrock level")));
         savePlayers();
         world.close();
     }

@@ -172,7 +172,7 @@ public class BlockInteraction {
             return;
         }
         Block block = world.getBlock(position.getX(), position.getY(), position.getZ());
-        if (block == null) {
+        if (block == null || !block.isBreakable()) {
             return;
         }
         breaking = position;
@@ -191,7 +191,8 @@ public class BlockInteraction {
 
     private void breakBlock(Player player, Vector3i position) {
         Block block = world.getBlock(position.getX(), position.getY(), position.getZ());
-        if (block == null || !player.mayBuild() || !inWorld(position) || !withinReach(player, position)) {
+        if (block == null || !player.mayBuild() || !inWorld(position) || !withinReach(player, position)
+                || (!block.isBreakable() && !player.isCreative())) {
             Logger.debug(player.getUsername() + " could not break the block at " + position);
             stopBreaking();
             player.getSession().sendPacket(PlayerManager.blockUpdate(position, blockAt(position)));

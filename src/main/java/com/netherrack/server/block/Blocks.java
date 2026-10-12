@@ -45,7 +45,8 @@ public final class Blocks {
     public static Block of(NbtMap state) {
         String name = state.getString("name");
         NbtMap states = state.getCompound("states", NbtMap.EMPTY);
-        return BY_STATE.computeIfAbsent(key(name, states), key -> new Block(state));
+        return BY_STATE.computeIfAbsent(key(name, states),
+                key -> UnbreakableBlock.isUnbreakable(name) ? new UnbreakableBlock(state) : new Block(state));
     }
 
     private static NbtMap key(String name, NbtMap states) {
