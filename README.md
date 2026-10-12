@@ -14,6 +14,9 @@
   <img src="https://img.shields.io/badge/Minecraft-Bedrock-62B47A?style=flat-square" alt="Minecraft Bedrock">
   <img src="https://img.shields.io/badge/Java-17%2B-ED8B00?style=flat-square&logo=openjdk&logoColor=white" alt="Java 17+">
   <img src="https://img.shields.io/badge/Build-Maven-C71A36?style=flat-square&logo=apachemaven" alt="Maven">
+  <a href="https://discord.gg/JFUz2G8H4V">
+    <img src="https://img.shields.io/badge/Discord-Server-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord">
+  </a>
 </p>
 
 # ℹ️ Information
