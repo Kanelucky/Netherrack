@@ -6,7 +6,7 @@ package com.netherrack.server.block;
 public class CobblestoneBlock extends Block {
 
     public CobblestoneBlock() {
-        super("minecraft:cobblestone", 1741778478);
+        super("minecraft:cobblestone");
     }
 
     @Override

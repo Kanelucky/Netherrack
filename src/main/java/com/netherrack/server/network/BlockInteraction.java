@@ -120,7 +120,7 @@ public class BlockInteraction {
 
         // The block state the held item carries: e.g. which colour of wool, or a slab's half.
         ItemData held = player.getInventory().get(slot);
-        Block block = Blocks.of(VanillaData.get().placedBlock(held), held.getBlockDefinition().getRuntimeId());
+        Block block = Blocks.of(VanillaData.get().placedBlock(held));
         world.setBlock(target.getX(), target.getY(), target.getZ(), block);
         players.broadcastBlock(target, block);
         players.broadcastPlaceSound(player, center(target), block);
@@ -146,7 +146,7 @@ public class BlockInteraction {
                 || held.getDefinition().getRuntimeId() != packet.getItemInHand().getDefinition().getRuntimeId()) {
             return "the client holds something else";
         }
-        if (VanillaData.get().placedBlock(held) == null || held.getBlockDefinition() == null) {
+        if (VanillaData.get().placedBlock(held) == null) {
             return "the held item doesn't place a block";
         }
         if (!inWorld(target) || !withinReach(player, target)) {

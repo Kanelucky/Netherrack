@@ -6,7 +6,7 @@ package com.netherrack.server.world;
 public interface WorldGenerator {
 
     /**
-     * Short id saved alongside a level so it can be regenerated with the same generator later.
+     * Short name of the kind of terrain, as the console shows it.
      */
     String getId();
 
@@ -17,5 +17,10 @@ public interface WorldGenerator {
      */
     default int getSpawnY() {
         return 64;
+    }
+
+    /** The biome of the chunks it generates. Defaults to plains. */
+    default int getBiome() {
+        return 1;
     }
 }

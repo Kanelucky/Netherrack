@@ -301,11 +301,11 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         // There's no player data storage yet, so every login is treated as a new profile.
         Logger.info("Player data not found for \"" + uuid + "\", creating new profile");
 
-        // Kept within chunk (0,0), the one Netherrack always pre-generates - otherwise the
-        // player could spawn in a chunk we haven't sent yet and fall through the void.
-        double spawnX = ThreadLocalRandom.current().nextDouble(-6, 6);
-        double spawnZ = ThreadLocalRandom.current().nextDouble(-6, 6);
-        int spawnY = world.getSpawnY();
+        // A little way from the world's spawn point, standing on whatever is there. The
+        // chunks sent once the client asks for them are the ones around this spot.
+        double spawnX = world.getSpawnX() + ThreadLocalRandom.current().nextDouble(-6, 6);
+        double spawnZ = world.getSpawnZ() + ThreadLocalRandom.current().nextDouble(-6, 6);
+        int spawnY = world.findSpawnY((int) Math.floor(spawnX), (int) Math.floor(spawnZ));
         spawnPosition = Vector3f.from(spawnX, spawnY + Player.EYE_HEIGHT, spawnZ);
 
         Logger.info("Player " + username + " cannot find the saved spawnpoint, reset the spawnpoint to "
@@ -765,11 +765,11 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         startGame.setPlayerPosition(spawnPosition);
         startGame.setRotation(Vector2f.from(0, 0));
 
-        startGame.setSeed(0L);
+        startGame.setSeed(world.getSeed());
         startGame.setSpawnBiomeType(SpawnBiomeType.DEFAULT);
         startGame.setCustomBiomeName("");
         startGame.setDimensionId(0); // overworld
-        startGame.setGeneratorId(2); // flat
+        startGame.setGeneratorId(world.getGeneratorType());
         startGame.setLevelGameType(netherrack.getDefaultGameMode());
         startGame.setDifficulty(1);
         startGame.setDefaultSpawn(Vector3i.from(spawnPosition.getFloorX(), spawnPosition.getFloorY(), spawnPosition.getFloorZ()));

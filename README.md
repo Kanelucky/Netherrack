@@ -96,7 +96,7 @@ The project started as a server-software simulation and is gradually being turne
 - [x] Client connection to a Bedrock client
 - [ ] Complete Bedrock play/login flow
 - [ ] Entity system
-- [ ] Persistent world storage
+- [x] Persistent world storage
 - [ ] Plugin API
 - [ ] More blocks and gameplay features
 

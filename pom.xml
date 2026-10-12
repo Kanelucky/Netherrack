@@ -88,6 +88,28 @@
             <artifactId>jline-terminal-jni</artifactId>
             <version>3.29.0</version>
         </dependency>
+
+        <!-- World storage: Bedrock worlds keep their chunks in a LevelDB database, in Mojang's
+             variant that compresses with zlib instead of Snappy. This is a pure Java LevelDB
+             with Mojang's changes (Apache 2.0): https://github.com/HiveGamesOSS/leveldb-mcpe-java
+             Its published POM leaves out its own API module and Guava (both are only in its
+             "uber" jar, alongside Snappy's native libraries we don't need), so they're
+             declared here. Guava is Apache 2.0 too. -->
+        <dependency>
+            <groupId>com.hivemc.leveldb</groupId>
+            <artifactId>leveldb</artifactId>
+            <version>1.1.0</version>
+        </dependency>
+        <dependency>
+            <groupId>com.hivemc.leveldb</groupId>
+            <artifactId>leveldb-api</artifactId>
+            <version>1.1.0</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>33.4.8-jre</version>
+        </dependency>
     </dependencies>
 
     <build>

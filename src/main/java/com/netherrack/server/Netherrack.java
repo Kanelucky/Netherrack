@@ -40,6 +40,7 @@ public class Netherrack {
 
     /** 20 ticks a second. */
     private static final long TICK_MILLIS = 50;
+    private static final long AUTOSAVE_SECONDS = 30;
 
     private final ServerConfig config;
     private final RakNetServer rakNetServer;
@@ -50,6 +51,8 @@ public class Netherrack {
     private ItemEntities itemEntities;
     private Permissions permissions;
     private ScheduledExecutorService ticker;
+    private ScheduledExecutorService autosave;
+    private boolean worldClosed;
     private volatile boolean running = true;
 
     public Netherrack() {
@@ -156,8 +159,18 @@ public class Netherrack {
 
         sleep(150);
         Logger.info(lang.get("server.preparing_level", levelName));
-        world = worldManager.loadOrCreate(levelName);
-        world.getChunk(0, 0);
+        try {
+            world = worldManager.loadOrCreate(levelName);
+        } catch (Exception e) {
+            // Running on without the world's storage would lose everything players build.
+            Logger.error(lang.get("server.level_unreadable", levelName, e.getMessage()));
+            System.exit(1);
+            return;
+        }
+        world.getChunk(world.getSpawnX() >> 4, world.getSpawnZ() >> 4);
+        // Ctrl+C or closing the console window still saves the world.
+        Runtime.getRuntime().addShutdownHook(new Thread(this::closeWorld, "World save"));
+        startAutosave();
 
         sleep(150);
         Logger.info(lang.get("server.opening", ip, port));
@@ -200,13 +213,47 @@ public class Netherrack {
     public void shutdown() {
         Logger.info(Lang.current.get("server.stopping"));
         sleep(200);
-        Logger.info(Lang.current.get("server.saving_level", config.get("level-name", "world")));
         rakNetServer.stop();
         ticker.shutdownNow();
-        sleep(200);
+        closeWorld();
         Logger.info(Lang.current.get("server.closed"));
         running = false;
         System.exit(0);
+    }
+
+    /**
+     * Saves the world and closes its storage, once: on stopping the server, or from the
+     * shutdown hook when the process is ended some other way.
+     */
+    private synchronized void closeWorld() {
+        if (world == null || worldClosed) {
+            return;
+        }
+        worldClosed = true;
+        if (autosave != null) {
+            autosave.shutdownNow();
+        }
+        Logger.info(Lang.current.get("server.saving_level", config.get("level-name", "world")));
+        world.close();
+    }
+
+    /** Writes what's changed in the world every so often, so a crash loses little. */
+    private void startAutosave() {
+        autosave = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "World autosave");
+            thread.setDaemon(true);
+            return thread;
+        });
+        autosave.scheduleWithFixedDelay(() -> {
+            try {
+                int saved = world.save();
+                if (saved > 0) {
+                    Logger.debug("Autosave wrote " + saved + " chunks.");
+                }
+            } catch (Exception e) {
+                Logger.error("Error during autosave: " + e);
+            }
+        }, AUTOSAVE_SECONDS, AUTOSAVE_SECONDS, TimeUnit.SECONDS);
     }
 
     /** The game mode players join in, and "default" stands for: "gamemode" in server.properties. */
