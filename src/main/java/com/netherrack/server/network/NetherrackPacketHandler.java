@@ -13,7 +13,6 @@ import com.netherrack.server.player.PlayerInventory;
 import com.netherrack.server.player.PlayerManager;
 import com.netherrack.server.player.SkinParser;
 import com.netherrack.server.util.Logger;
-import com.netherrack.server.world.Chunk;
 import com.netherrack.server.world.World;
 import io.netty.buffer.Unpooled;
 import org.cloudburstmc.math.vector.Vector2f;
@@ -68,10 +67,8 @@ import org.cloudburstmc.protocol.bedrock.packet.ItemComponentPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ItemStackRequestPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ItemStackResponsePacket;
 import org.cloudburstmc.protocol.bedrock.packet.JigsawStructureDataPacket;
-import org.cloudburstmc.protocol.bedrock.packet.LevelChunkPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MobEquipmentPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
-import org.cloudburstmc.protocol.bedrock.packet.NetworkChunkPublisherUpdatePacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkSettingsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerActionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket;
@@ -124,14 +121,22 @@ import java.util.concurrent.ThreadLocalRandom;
  */
 public class NetherrackPacketHandler implements BedrockPacketHandler {
 
-    /** How many chunks out from spawn to actually send, regardless of what the client requests. */
-    private static final int MAX_CHUNK_RADIUS = 4;
+    /**
+     * How many chunks out from a joining player are sent before they spawn, so there's ground
+     * under them; the rest of their view follows on the server tick.
+     */
+    private static final int SPAWN_CHUNK_RADIUS = 4;
+
+    /** The smallest view a player gets, whatever their client asks for. */
+    private static final int MIN_CHUNK_RADIUS = 2;
 
     private final BedrockServerSession session;
     private final World world;
     private final PlayerManager players;
     private final BlockInteraction blockInteraction;
     private final ItemEntities itemEntities;
+    private final ChunkViews chunkViews;
+    private final ChunkView chunkView;
     private final Netherrack netherrack;
     private final VanillaData vanillaData = VanillaData.get();
     private final long runtimeEntityId = EntityIds.next();
@@ -155,6 +160,8 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         this.netherrack = netherrack;
         this.itemEntities = netherrack.getItemEntities();
         this.blockInteraction = new BlockInteraction(world, players, itemEntities);
+        this.chunkViews = netherrack.getChunkViews();
+        this.chunkView = new ChunkView(session, world);
     }
 
     /**
@@ -368,22 +375,21 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         return PacketSignal.HANDLED;
     }
 
+    /**
+     * How far the client can see, which it asks as it joins and again whenever its render
+     * distance changes: that far, as far as its device can handle (its max radius) and up
+     * to the server's view-distance - but at least 2 chunks.
+     */
     @Override
     public PacketSignal handle(RequestChunkRadiusPacket packet) {
-        int radius = Math.min(packet.getRadius(), MAX_CHUNK_RADIUS);
+        int wanted = packet.getMaxRadius() > 0 ? Math.min(packet.getRadius(), packet.getMaxRadius()) : packet.getRadius();
+        int radius = Math.max(MIN_CHUNK_RADIUS, Math.min(wanted, netherrack.getViewDistance()));
 
         ChunkRadiusUpdatedPacket radiusUpdated = new ChunkRadiusUpdatedPacket();
         radiusUpdated.setRadius(radius);
         session.sendPacket(radiusUpdated);
 
-        // Sent ahead of the chunks so the client already treats this area as in range
-        // when they arrive.
-        NetworkChunkPublisherUpdatePacket publisherUpdate = new NetworkChunkPublisherUpdatePacket();
-        publisherUpdate.setPosition(Vector3i.from(spawnPosition.getFloorX(), spawnPosition.getFloorY(), spawnPosition.getFloorZ()));
-        publisherUpdate.setRadius(radius * 16);
-        session.sendPacket(publisherUpdate);
-
-        sendChunks(radius);
+        chunkView.setRadius(radius, player != null ? player.getPosition() : spawnPosition);
 
         // PLAYER_SPAWN is what moves the client off the loading screen, and the client only
         // sends SetLocalPlayerAsInitialized after receiving it - so it has to go out here,
@@ -391,6 +397,8 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         // its radius later (e.g. a render distance change), hence the once-only flag.
         if (!spawned) {
             spawned = true;
+            chunkView.sendWithin(SPAWN_CHUNK_RADIUS);
+            chunkViews.add(chunkView);
             sendOwnPlayerState();
 
             PlayStatusPacket spawn = new PlayStatusPacket();
@@ -495,6 +503,7 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         }
 
         player.setLocation(position, rotation);
+        chunkView.moveTo(position);
         boolean onGround = packet.getInputData().contains(PlayerAuthInputData.VERTICAL_COLLISION)
                 && packet.getDelta().getY() <= 0;
         players.broadcastMovement(player, onGround, packet.getTick());
@@ -749,6 +758,7 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
 
     /** Called once the connection has closed, for whatever reason. */
     public void onDisconnect() {
+        chunkViews.remove(chunkView);
         if (player != null) {
             blockInteraction.stopBreaking();
             // Saved before they leave the player list: stopping the server saves everyone
@@ -931,30 +941,5 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         session.sendPacket(new CraftingDataPacket());
 
         session.sendPacket(new TrimDataPacket());
-    }
-
-    private void sendChunks(int radius) {
-        int centerChunkX = spawnPosition.getFloorX() >> 4;
-        int centerChunkZ = spawnPosition.getFloorZ() >> 4;
-
-        for (int cx = centerChunkX - radius; cx <= centerChunkX + radius; cx++) {
-            for (int cz = centerChunkZ - radius; cz <= centerChunkZ + radius; cz++) {
-                sendChunk(cx, cz);
-            }
-        }
-    }
-
-    private void sendChunk(int chunkX, int chunkZ) {
-        Chunk chunk = world.getChunk(chunkX, chunkZ);
-
-        LevelChunkPacket packet = new LevelChunkPacket();
-        packet.setChunkX(chunkX);
-        packet.setChunkZ(chunkZ);
-        packet.setSubChunksLength(ChunkEncoder.SUB_CHUNK_COUNT);
-        packet.setCachingEnabled(false);
-        packet.setRequestSubChunks(false);
-        packet.setData(ChunkEncoder.encodeChunk(chunk));
-
-        session.sendPacket(packet);
     }
 }

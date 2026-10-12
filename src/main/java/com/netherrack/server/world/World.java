@@ -8,14 +8,16 @@ import org.cloudburstmc.nbt.NbtMap;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * A single world/dimension. Chunks are loaded the first time they're asked for: from the
- * world's storage if it has them, otherwise from the generator. They stay in memory from
- * then on, and {@link #save()} writes whatever has changed in them back to the storage.
- * The world's storage also keeps each player's data, see {@link #loadPlayer}.
+ * world's storage if it has them, otherwise from the generator. They stay in memory until
+ * no player is near them any more ({@link #unloadChunksExcept}), and {@link #save()} writes
+ * whatever has changed in them back to the storage. The world's storage also keeps each
+ * player's data, see {@link #loadPlayer}.
  */
 public class World {
 
@@ -98,6 +100,49 @@ public class World {
 
     public void setBlock(int x, int y, int z, Block block) {
         getChunk(x >> 4, z >> 4).setBlock(x & 15, y, z & 15, block);
+    }
+
+    /** Whether a chunk is in memory: loaded or generated, and not unloaded since. */
+    public boolean isChunkLoaded(int chunkX, int chunkZ) {
+        return chunks.containsKey(chunkKey(chunkX, chunkZ));
+    }
+
+    /** How many chunks are in memory. */
+    public int getLoadedChunkCount() {
+        return chunks.size();
+    }
+
+    /**
+     * Saves and lets go of every chunk in memory but those in {@code keep} (by
+     * {@link #chunkKey}) - the ones players are still near. A chunk that can't be saved
+     * stays, to be tried again next time. Returns how many were unloaded.
+     */
+    public synchronized int unloadChunksExcept(Set<Long> keep) {
+        int unloaded = 0;
+        for (Map.Entry<Long, Chunk> entry : chunks.entrySet()) {
+            if (keep.contains(entry.getKey())) {
+                continue;
+            }
+            Chunk chunk = entry.getValue();
+            // Held while it's saved and dropped, so no change can slip in between the two.
+            synchronized (chunk) {
+                if (chunk.hasChanges()) {
+                    if (storage == null || closed) {
+                        continue; // nowhere to keep its changes but memory
+                    }
+                    try {
+                        storage.save(chunk);
+                    } catch (IOException e) {
+                        Logger.error("Could not save chunk " + chunk.getChunkX() + ", " + chunk.getChunkZ()
+                                + " of \"" + name + "\", so it stays loaded: " + e.getMessage());
+                        continue;
+                    }
+                }
+                chunks.remove(entry.getKey(), chunk);
+            }
+            unloaded++;
+        }
+        return unloaded;
     }
 
     /** Writes every chunk's changes to the world's storage, and returns how many chunks that was. */
@@ -189,7 +234,8 @@ public class World {
         return chunk;
     }
 
-    private static long chunkKey(int chunkX, int chunkZ) {
+    /** A chunk's coordinates as one number, as the world keys its chunks by. */
+    public static long chunkKey(int chunkX, int chunkZ) {
         return ((long) chunkX << 32) | (chunkZ & 0xFFFFFFFFL);
     }
 }

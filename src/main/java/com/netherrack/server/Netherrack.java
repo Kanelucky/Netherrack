@@ -10,6 +10,7 @@ import com.netherrack.server.command.OpCommand;
 import com.netherrack.server.command.StopCommand;
 import com.netherrack.server.command.VersionCommand;
 import com.netherrack.server.entity.ItemEntities;
+import com.netherrack.server.network.ChunkViews;
 import com.netherrack.server.network.RakNetServer;
 import com.netherrack.server.player.GameModes;
 import com.netherrack.server.player.Permission;
@@ -50,6 +51,7 @@ public class Netherrack {
     private final CommandManager commandManager;
     private World world;
     private ItemEntities itemEntities;
+    private ChunkViews chunkViews;
     private Permissions permissions;
     private ScheduledExecutorService ticker;
     private ScheduledExecutorService autosave;
@@ -107,6 +109,15 @@ public class Netherrack {
 
     public ItemEntities getItemEntities() {
         return itemEntities;
+    }
+
+    public ChunkViews getChunkViews() {
+        return chunkViews;
+    }
+
+    /** The furthest players may see, in chunks: view-distance from server.properties. */
+    public int getViewDistance() {
+        return Math.max(1, config.getInt("view-distance", 32));
     }
 
     public CommandManager getCommandManager() {
@@ -177,6 +188,7 @@ public class Netherrack {
         sleep(150);
         Logger.info(lang.get("server.opening", ip, port));
         itemEntities = new ItemEntities(world, playerManager);
+        chunkViews = new ChunkViews(world);
         startTicking();
         rakNetServer.start(world, playerManager, this);
 
@@ -292,7 +304,8 @@ public class Netherrack {
 
     /**
      * Runs the world 20 times a second, as vanilla does: everything that changes on its
-     * own over time, such as dropped items falling and being picked up. A tick that throws
+     * own over time, such as dropped items falling and being picked up, and players getting
+     * the chunks around them as they move. A tick that throws
      * is logged and the next one runs anyway - an uncaught exception would otherwise stop
      * the schedule for good.
      */
@@ -301,6 +314,7 @@ public class Netherrack {
         ticker.scheduleAtFixedRate(() -> {
             try {
                 itemEntities.tick();
+                chunkViews.tick();
             } catch (Exception e) {
                 Logger.error("Error during the server tick: " + e);
             }
