@@ -333,6 +333,8 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         GameType gameMode = saved != null && saved.gameMode() != null ? saved.gameMode() : netherrack.getDefaultGameMode();
         player = new Player(session, username, UUID.fromString(uuid), xuid, runtimeEntityId,
                 skin, deviceId, buildPlatform, spawnPosition, gameMode);
+        // What else the player is shown depends on which chunks their client has.
+        player.setChunkView(chunkView);
         if (saved != null) {
             if (saved.position() != null) {
                 player.setLocation(saved.position(), saved.rotation());
@@ -464,9 +466,8 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         Logger.info(username + " joined the game.");
 
         // Only now, with the client past its loading screen, is the player actually in
-        // the world for others to see.
+        // the world for others to see. The items around them appear on the next tick.
         players.join(player);
-        itemEntities.showAll(player);
 
         return PacketSignal.HANDLED;
     }

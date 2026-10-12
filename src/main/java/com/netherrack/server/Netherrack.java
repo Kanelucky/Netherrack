@@ -304,8 +304,9 @@ public class Netherrack {
 
     /**
      * Runs the world 20 times a second, as vanilla does: everything that changes on its
-     * own over time, such as dropped items falling and being picked up, and players getting
-     * the chunks around them as they move. A tick that throws
+     * own over time, such as dropped items falling and being picked up, players getting
+     * the chunks around them as they move, and the players and items in those chunks
+     * appearing to them. A tick that throws
      * is logged and the next one runs anyway - an uncaught exception would otherwise stop
      * the schedule for good.
      */
@@ -313,8 +314,10 @@ public class Netherrack {
         ticker = Executors.newSingleThreadScheduledExecutor(runnable -> new Thread(runnable, "Server tick"));
         ticker.scheduleAtFixedRate(() -> {
             try {
-                itemEntities.tick();
+                // Chunks first, so what's shown below goes by the chunks clients have now.
                 chunkViews.tick();
+                itemEntities.tick();
+                playerManager.updateVisibility();
             } catch (Exception e) {
                 Logger.error("Error during the server tick: " + e);
             }

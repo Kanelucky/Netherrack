@@ -32,14 +32,16 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Every player currently in the world, and keeping them visible to each other: showing
- * players to each other as they join, removing them as they leave, and passing each
- * player's movement on to everyone else. Spectators are the exception: they stay in
- * everyone's player list, but nobody else sees them in the world.
+ * Every player currently in the world, and keeping them visible to each other. Everyone is
+ * on everyone's player list, but a player only sees the others in the chunks their client
+ * has - within their view distance - as vanilla does: others appear as they come into a
+ * player's view and go as they leave it ({@link #updateVisibility}), and their movement,
+ * sneaking, swings and armor only go to those who can see them. Spectators are never seen.
  * <p>
- * Players' packets are handled on different network threads. join() and leave() are
- * synchronized so two players joining at once can't each miss the other; sending is
- * safe from any thread, since the protocol library queues packets per connection.
+ * Players' packets are handled on different network threads. join(), leave() and
+ * updateVisibility() are synchronized so two players joining at once can't each miss the
+ * other; sending is safe from any thread, since the protocol library queues packets per
+ * connection.
  */
 public class PlayerManager {
 
@@ -60,9 +62,9 @@ public class PlayerManager {
     }
 
     /**
-     * Adds a player who has just finished loading into the world: they're sent everyone
-     * already here (themselves included in the player list, as vanilla does), and
-     * everyone already here is sent them.
+     * Adds a player who has just finished loading into the world: everyone already here
+     * goes on their player list (themselves included, as vanilla does) and they go on
+     * everyone else's. Who sees whom in the world is then down to their views.
      */
     public synchronized void join(Player joining) {
         players.put(joining.getUuid(), joining);
@@ -74,36 +76,19 @@ public class PlayerManager {
         joining.getSession().sendPacket(playerList(PlayerListPacket.Action.ADD, everyone));
 
         PlayerListPacket joiningEntry = playerList(PlayerListPacket.Action.ADD, List.of(listEntry(joining)));
-        AddPlayerPacket joiningEntity = addPlayer(joining);
-        MobArmorEquipmentPacket joiningArmor = armor(joining);
         for (Player other : others(joining)) {
-            if (!other.isSpectator()) {
-                joining.getSession().sendPacket(addPlayer(other));
-                joining.getSession().sendPacket(armor(other));
-            }
             other.getSession().sendPacket(joiningEntry);
-            if (!joining.isSpectator()) {
-                other.getSession().sendPacket(joiningEntity);
-                other.getSession().sendPacket(joiningArmor);
-            }
         }
+        updateVisibility();
     }
 
     /**
      * Switches a player's game mode, hiding them from everyone else as they become a
-     * spectator and showing them again as they stop being one.
+     * spectator and showing them again, to those whose view they're in, as they stop being one.
      */
     public synchronized void changeGameMode(Player player, GameType gameMode) {
-        boolean wasSpectator = player.isSpectator();
         player.setGameMode(gameMode);
-        if (!wasSpectator && player.isSpectator()) {
-            RemoveEntityPacket removeEntity = new RemoveEntityPacket();
-            removeEntity.setUniqueEntityId(player.getEntityId());
-            broadcast(player, removeEntity);
-        } else if (wasSpectator && !player.isSpectator()) {
-            broadcast(player, addPlayer(player));
-            broadcast(player, armor(player));
-        }
+        updateVisibility();
     }
 
     public synchronized void leave(Player leaving) {
@@ -111,14 +96,36 @@ public class PlayerManager {
             return; // never finished joining, so nobody was shown them
         }
 
-        RemoveEntityPacket removeEntity = new RemoveEntityPacket();
-        removeEntity.setUniqueEntityId(leaving.getEntityId());
-
         PlayerListPacket.Entry entry = new PlayerListPacket.Entry(leaving.getUuid());
         PlayerListPacket removeFromList = playerList(PlayerListPacket.Action.REMOVE, List.of(entry));
+        for (Player other : players.values()) {
+            if (other.stopShowing(leaving.getEntityId())) {
+                other.getSession().sendPacket(removeEntity(leaving.getEntityId()));
+            }
+            other.getSession().sendPacket(removeFromList);
+        }
+    }
 
-        broadcast(leaving, removeEntity);
-        broadcast(leaving, removeFromList);
+    /**
+     * Shows each player the others in the chunks their client has, and stops showing the
+     * ones that have left those chunks - or the view has left them. Spectators are never
+     * shown. Run every tick, and whenever someone joins or changes game mode.
+     */
+    public synchronized void updateVisibility() {
+        for (Player viewer : players.values()) {
+            for (Player other : players.values()) {
+                if (other == viewer) {
+                    continue;
+                }
+                boolean visible = !other.isSpectator() && viewer.canSee(other.getPosition());
+                if (visible && viewer.startShowing(other.getEntityId())) {
+                    viewer.getSession().sendPacket(addPlayer(other));
+                    viewer.getSession().sendPacket(armor(other));
+                } else if (!visible && viewer.stopShowing(other.getEntityId())) {
+                    viewer.getSession().sendPacket(removeEntity(other.getEntityId()));
+                }
+            }
+        }
     }
 
     /** Shows everyone else where the player has moved to and which way they're facing. */
@@ -216,11 +223,19 @@ public class PlayerManager {
         }
     }
 
-    /** Sends everyone else something about how a player looks or moves - unless nobody can see them. */
+    /** Sends something about how a player looks or moves to those whose clients are showing them. */
     private void broadcastSeen(Player player, BedrockPacket packet) {
-        if (!player.isSpectator()) {
-            broadcast(player, packet);
+        for (Player other : others(player)) {
+            if (other.isShowing(player.getEntityId())) {
+                other.getSession().sendPacket(packet);
+            }
         }
+    }
+
+    private static RemoveEntityPacket removeEntity(long entityId) {
+        RemoveEntityPacket packet = new RemoveEntityPacket();
+        packet.setUniqueEntityId(entityId);
+        return packet;
     }
 
     private void broadcast(Player except, BedrockPacket packet) {

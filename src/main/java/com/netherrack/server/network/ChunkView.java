@@ -11,7 +11,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Deque;
-import java.util.HashSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.List;
 import java.util.Set;
 
@@ -46,7 +46,8 @@ public final class ChunkView {
     private int radius;
     private int centerX;
     private int centerZ;
-    private final Set<Long> sent = new HashSet<>();
+    // Concurrent, so has() can answer from any thread without waiting for a send to finish.
+    private final Set<Long> sent = ConcurrentHashMap.newKeySet();
     private final Deque<Long> queue = new ArrayDeque<>();
 
     public ChunkView(BedrockServerSession session, World world) {
@@ -87,6 +88,11 @@ public final class ChunkView {
     }
 
     /** Adds the chunks this player has or is about to get, by World.chunkKey, so the world keeps them loaded. */
+    /** Whether the client has this chunk, so it can be shown what's in it. */
+    public boolean has(int chunkX, int chunkZ) {
+        return sent.contains(World.chunkKey(chunkX, chunkZ));
+    }
+
     public synchronized void addWanted(Set<Long> keys) {
         keys.addAll(sent);
         keys.addAll(queue);
