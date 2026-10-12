@@ -8,6 +8,7 @@ import org.cloudburstmc.protocol.bedrock.data.GameType;
 import org.cloudburstmc.protocol.bedrock.data.LevelEvent;
 import org.cloudburstmc.protocol.bedrock.data.SoundEvent;
 import org.cloudburstmc.protocol.bedrock.data.command.CommandPermission;
+import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerId;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
 import org.cloudburstmc.protocol.bedrock.packet.AddPlayerPacket;
 import org.cloudburstmc.protocol.bedrock.packet.AnimatePacket;
@@ -15,6 +16,7 @@ import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LevelEventPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LevelSoundEventPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MobArmorEquipmentPacket;
+import org.cloudburstmc.protocol.bedrock.packet.MobEquipmentPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerListPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RemoveEntityPacket;
@@ -26,8 +28,10 @@ import java.awt.Color;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -36,7 +40,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * on everyone's player list, but a player only sees the others in the chunks their client
  * has - within their view distance - as vanilla does: others appear as they come into a
  * player's view and go as they leave it ({@link #updateVisibility}), and their movement,
- * sneaking, swings and armor only go to those who can see them. Spectators are never seen.
+ * sneaking, swings, armor and what they hold ({@link #updateEquipment}) only go to those
+ * who can see them. Spectators are never seen.
  * <p>
  * Players' packets are handled on different network threads. join(), leave() and
  * updateVisibility() are synchronized so two players joining at once can't each miss the
@@ -46,6 +51,17 @@ import java.util.concurrent.ConcurrentHashMap;
 public class PlayerManager {
 
     private final Map<UUID, Player> players = new ConcurrentHashMap<>();
+    // What each player was last shown holding, to send others only what changes.
+    private final Map<Player, Equipment> shownEquipment = new HashMap<>();
+
+    /** What a player holds, as others see it: the hotbar slot they've picked, its item and the offhand's. */
+    private record Equipment(int slot, ItemData held, ItemData offhand) {
+
+        static Equipment of(Player player) {
+            int slot = player.getSelectedSlot();
+            return new Equipment(slot, player.getInventory().get(slot), player.getInventory().getOffhand());
+        }
+    }
 
     public Collection<Player> getPlayers() {
         return Collections.unmodifiableCollection(players.values());
@@ -95,6 +111,7 @@ public class PlayerManager {
         if (players.remove(leaving.getUuid()) == null) {
             return; // never finished joining, so nobody was shown them
         }
+        shownEquipment.remove(leaving);
 
         PlayerListPacket.Entry entry = new PlayerListPacket.Entry(leaving.getUuid());
         PlayerListPacket removeFromList = playerList(PlayerListPacket.Action.REMOVE, List.of(entry));
@@ -119,11 +136,37 @@ public class PlayerManager {
                 }
                 boolean visible = !other.isSpectator() && viewer.canSee(other.getPosition());
                 if (visible && viewer.startShowing(other.getEntityId())) {
-                    viewer.getSession().sendPacket(addPlayer(other));
+                    Equipment equipment = Equipment.of(other);
+                    viewer.getSession().sendPacket(addPlayer(other, equipment.held()));
                     viewer.getSession().sendPacket(armor(other));
+                    if (!equipment.offhand().isNull()) {
+                        viewer.getSession().sendPacket(offhand(other, equipment));
+                    }
                 } else if (!visible && viewer.stopShowing(other.getEntityId())) {
                     viewer.getSession().sendPacket(removeEntity(other.getEntityId()));
                 }
+            }
+        }
+    }
+
+    /**
+     * Shows what each player holds, to those who can see them, when it changes: switching
+     * hotbar slot, or the item in the picked slot or the offhand becoming something else.
+     * The stack's size doesn't show in their hand, so placing a block from it changes
+     * nothing. Run every tick.
+     */
+    public synchronized void updateEquipment() {
+        for (Player player : players.values()) {
+            Equipment now = Equipment.of(player);
+            Equipment before = shownEquipment.put(player, now);
+            if (before == null) {
+                continue; // anyone who sees them now was shown this as they came into view
+            }
+            if (before.slot() != now.slot() || !looksSame(before.held(), now.held())) {
+                broadcastSeen(player, mainHand(player, now));
+            }
+            if (!looksSame(before.offhand(), now.offhand())) {
+                broadcastSeen(player, offhand(player, now));
             }
         }
     }
@@ -254,6 +297,51 @@ public class PlayerManager {
         return others;
     }
 
+    /** The item in the player's picked hotbar slot, in their main hand. */
+    private static MobEquipmentPacket mainHand(Player player, Equipment equipment) {
+        MobEquipmentPacket packet = new MobEquipmentPacket();
+        packet.setRuntimeEntityId(player.getEntityId());
+        packet.setItem(asShown(equipment.held()));
+        packet.setInventorySlot(equipment.slot());
+        packet.setHotbarSlot(equipment.slot());
+        packet.setContainerId(ContainerId.INVENTORY);
+        return packet;
+    }
+
+    /** The item in the player's offhand. */
+    private static MobEquipmentPacket offhand(Player player, Equipment equipment) {
+        MobEquipmentPacket packet = new MobEquipmentPacket();
+        packet.setRuntimeEntityId(player.getEntityId());
+        packet.setItem(asShown(equipment.offhand()));
+        packet.setInventorySlot(0);
+        packet.setHotbarSlot(0);
+        packet.setContainerId(ContainerId.OFFHAND);
+        return packet;
+    }
+
+    /**
+     * An item as someone else sees it in a player's hand: without the stack network id,
+     * which only means something to the player whose inventory it's in.
+     */
+    private static ItemData asShown(ItemData item) {
+        return item.isNull() ? ItemData.AIR : item.toBuilder().usingNetId(false).netId(0).build();
+    }
+
+    /** Whether two items look the same in a hand: the same item, damage, block and NBT, whatever their counts. */
+    private static boolean looksSame(ItemData a, ItemData b) {
+        if (a.isNull() || b.isNull()) {
+            return a.isNull() == b.isNull();
+        }
+        return a.getDefinition().getRuntimeId() == b.getDefinition().getRuntimeId()
+                && a.getDamage() == b.getDamage()
+                && blockId(a) == blockId(b)
+                && Objects.equals(a.getTag(), b.getTag());
+    }
+
+    private static int blockId(ItemData item) {
+        return item.getBlockDefinition() != null ? item.getBlockDefinition().getRuntimeId() : 0;
+    }
+
     private static MobArmorEquipmentPacket armor(Player player) {
         List<ItemData> worn = player.getInventory().getArmor();
         MobArmorEquipmentPacket packet = new MobArmorEquipmentPacket();
@@ -300,7 +388,8 @@ public class PlayerManager {
         return entry;
     }
 
-    private static AddPlayerPacket addPlayer(Player player) {
+    /** The player appearing to someone, holding this item. */
+    private static AddPlayerPacket addPlayer(Player player, ItemData held) {
         AddPlayerPacket packet = new AddPlayerPacket();
         packet.setUuid(player.getUuid());
         packet.setUsername(player.getUsername());
@@ -311,7 +400,7 @@ public class PlayerManager {
         packet.setPosition(player.getFeetPosition());
         packet.setMotion(Vector3f.ZERO);
         packet.setRotation(player.getRotation());
-        packet.setHand(ItemData.AIR);
+        packet.setHand(asShown(held));
         packet.setGameType(GameType.SURVIVAL);
         packet.setDeviceId(player.getDeviceId());
         packet.setBuildPlatform(player.getBuildPlatform());
