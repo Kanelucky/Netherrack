@@ -19,7 +19,8 @@ import java.util.Map;
  *   "encoding_version":6,"structure_options":null,"world_version":"version.post_1_18"}
  * </pre>
  * Layers start at y -64 for worlds made since 1.18 ("version.post_1_18"), and at y 0 for
- * older ones.
+ * older ones. Without "block_layers" there are none: the world is empty, apart from The
+ * Void preset's start platform.
  */
 public class FlatGenerator implements WorldGenerator {
 
@@ -27,9 +28,18 @@ public class FlatGenerator implements WorldGenerator {
     private final int bottomY;
     private final int biome;
     private final String presetId;
+    private final boolean startPlatform;
+    private final int spawnX;
+    private final int spawnZ;
 
-    /** @throws IllegalArgumentException if the layers can't be read */
-    public FlatGenerator(String layersJson) {
+    /**
+     * @param spawnX the world spawn's x, which a start platform is around
+     * @param spawnZ the world spawn's z
+     * @throws IllegalArgumentException if the layers can't be read
+     */
+    public FlatGenerator(String layersJson, int spawnX, int spawnZ) {
+        this.spawnX = spawnX;
+        this.spawnZ = spawnZ;
         Map<String, Object> json;
         try {
             json = JsonUtil.parseJson(layersJson);
@@ -39,11 +49,14 @@ public class FlatGenerator implements WorldGenerator {
         this.bottomY = "version.post_1_18".equals(json.get("world_version")) ? Chunk.MIN_Y : 0;
         this.biome = json.get("biome_id") instanceof Number id ? id.intValue() : 1;
         this.presetId = json.get("preset_id") instanceof String id ? id : null;
+        FlatPreset preset = presetId != null ? FlatPreset.fromName(presetId) : null;
+        this.startPlatform = preset != null && preset.hasStartPlatform();
 
-        if (!(json.get("block_layers") instanceof List<?> blockLayers)) {
-            throw new IllegalArgumentException("the flat world layers have no \"block_layers\"");
+        Object blockLayers = json.getOrDefault("block_layers", List.of());
+        if (!(blockLayers instanceof List<?> entries)) {
+            throw new IllegalArgumentException("the flat world's \"block_layers\" aren't a list");
         }
-        for (Object entry : blockLayers) {
+        for (Object entry : entries) {
             if (!(entry instanceof Map<?, ?> layer) || !(layer.get("block_name") instanceof String name)) {
                 // Old worlds' layers name their blocks by number, which this version has no table for.
                 throw new IllegalArgumentException("a flat world layer has no \"block_name\"");
@@ -75,11 +88,30 @@ public class FlatGenerator implements WorldGenerator {
                 }
             }
         }
+        if (startPlatform) {
+            generateStartPlatform(chunk);
+        }
+    }
+
+    /** The part of The Void's start platform in this chunk, if any. */
+    private void generateStartPlatform(Chunk chunk) {
+        Block stone = Blocks.of(VanillaData.get().defaultBlockState("minecraft:stone"));
+        Block cobblestone = Blocks.COBBLESTONE;
+        int radius = FlatPreset.START_PLATFORM_RADIUS;
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                int dx = (chunk.getChunkX() << 4) + x - spawnX;
+                int dz = (chunk.getChunkZ() << 4) + z - spawnZ;
+                if (Math.abs(dx) <= radius && Math.abs(dz) <= radius) {
+                    chunk.setBlock(x, bottomY, z, dx == 0 && dz == 0 ? cobblestone : stone);
+                }
+            }
+        }
     }
 
     @Override
     public int getSpawnY() {
-        return bottomY + layers.size();
+        return startPlatform ? bottomY + 1 : bottomY + layers.size();
     }
 
     @Override

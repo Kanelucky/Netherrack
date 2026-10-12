@@ -84,11 +84,11 @@ public class WorldManager {
             Logger.warn("Unknown level-type \"" + type + "\" in server.properties, so the new level is flat."
                     + " Expected flat or default.");
         }
-        String presetName = config.get("flat-world-preset", FlatPreset.CLASSIC_FLAT.getSettingName());
+        String presetName = config.get("flat-world-preset", FlatPreset.CLASSIC_FLAT.getDisplayName());
         FlatPreset preset = FlatPreset.fromName(presetName);
         if (preset == null) {
             Logger.warn("Unknown flat-world-preset \"" + presetName + "\" in server.properties, so the new level is "
-                    + FlatPreset.CLASSIC_FLAT.getSettingName() + ".");
+                    + FlatPreset.CLASSIC_FLAT.getDisplayName() + ".");
             return FlatPreset.CLASSIC_FLAT;
         }
         return preset;
@@ -115,7 +115,7 @@ public class WorldManager {
                 .putInt("SpawnX", 0)
                 .putInt("SpawnY", Short.MAX_VALUE) // "find the ground", as vanilla saves it
                 .putInt("SpawnZ", 0)
-                .putLong("RandomSeed", flat != null ? 0L : new Random().nextLong())
+                .putLong("RandomSeed", new Random().nextLong()) // as the game picks one, flat or not
                 .putLong("Time", 0L)
                 .putLong("currentTick", 0L)
                 .putLong("LastPlayed", System.currentTimeMillis() / 1000L)
@@ -158,7 +158,7 @@ public class WorldManager {
             layers = FlatPreset.CLASSIC_FLAT.toJson();
         }
         try {
-            return new FlatGenerator(layers);
+            return new FlatGenerator(layers, level.getInt("SpawnX", 0), level.getInt("SpawnZ", 0));
         } catch (IllegalArgumentException e) {
             Logger.warn("This flat world's layers can't be read (" + e.getMessage() + "), so nothing is generated.");
             return new EmptyGenerator("flat");
