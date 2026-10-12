@@ -95,7 +95,7 @@ public class ServerConfig {
                         "Allowed values: \"flat\" (its layers are set by flat-world-preset), or \"default\" for"
                                 + " generated terrain (not available yet: until it is, the world stays empty)",
                         "Commenting this out is the same as \"default\"."),
-                new Setting("op-permission-level", "0",
+                new Setting("op-permission-level", "2",
                         "Which commands operators can use: 0 only the ones every player can, 2 adds commands"
                                 + " like gamemode, 3 adds op and deop, and 4 adds stop.",
                         "Who is an operator is set in permissions.json, or with the op and deop commands.",
