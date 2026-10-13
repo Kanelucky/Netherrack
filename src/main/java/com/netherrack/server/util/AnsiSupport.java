@@ -11,16 +11,20 @@ import java.io.IOException;
  * <p>
  * Building a JLine system terminal does exactly that as a side effect - on Windows, via
  * the JNI provider (jline-terminal-jni), it calls SetConsoleMode with
- * ENABLE_VIRTUAL_TERMINAL_PROCESSING for us. We don't actually need JLine's Terminal
- * object for anything afterwards (System.out keeps working as normal, now with ANSI
- * codes rendering correctly) - we just need this to run once, early, before any colored
- * output is printed.
+ * ENABLE_VIRTUAL_TERMINAL_PROCESSING for us. This has to run once, early, before any
+ * colored output is printed. The same terminal is where the console's prompt reads
+ * commands from later (see Console).
  */
 public final class AnsiSupport {
 
     private static volatile Terminal terminal;
 
     private AnsiSupport() {
+    }
+
+    /** The terminal {@link #init} opened, or null if it couldn't. */
+    public static Terminal getTerminal() {
+        return terminal;
     }
 
     public static void init() {

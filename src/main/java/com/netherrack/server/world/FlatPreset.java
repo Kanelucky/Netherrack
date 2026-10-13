@@ -3,7 +3,7 @@ package com.netherrack.server.world;
 import java.util.Locale;
 
 /**
- * The game's own flat world presets, which flat-world-preset in server.properties picks
+ * The game's own flat world presets, which level.preset-type in netherrack.yml picks
  * from for a new level. Each is saved in level.dat the way the game saves it, so the game
  * shows which preset the world was made with.
  * <p>

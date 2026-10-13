@@ -1,5 +1,6 @@
 package com.netherrack.server.world;
 
+import com.netherrack.server.NetherrackConfig;
 import com.netherrack.server.ServerConfig;
 import com.netherrack.server.setup.Lang;
 import com.netherrack.server.util.Logger;
@@ -38,10 +39,15 @@ public class WorldManager {
     private static final char BYTE_ORDER_MARK = 0xFEFF;
 
     private final ServerConfig config;
+    private final NetherrackConfig settings;
 
-    /** @param config where a new level's type and flat world preset come from */
-    public WorldManager(ServerConfig config) {
+    /**
+     * @param config   where a new level's type comes from
+     * @param settings where a new flat level's preset comes from
+     */
+    public WorldManager(ServerConfig config, NetherrackConfig settings) {
         this.config = config;
+        this.settings = settings;
     }
 
     /** @throws IOException if the world can't be read, or a new one can't be written */
@@ -74,9 +80,9 @@ public class WorldManager {
     }
 
     /**
-     * The flat world layers a new level gets from server.properties, or null for generated
-     * terrain. level-type picks between the two ("default" when it isn't set, as on Bedrock
-     * Dedicated Server), and flat-world-preset picks the layers of a flat one.
+     * The flat world layers a new level gets, or null for generated terrain. level-type in
+     * server.properties picks between the two ("default" when it isn't set, as on Bedrock
+     * Dedicated Server), and level.preset-type in netherrack.yml picks the layers of a flat one.
      */
     private FlatPreset newLevelLayers() {
         String type = config.get("level-type", "default").trim();
@@ -87,10 +93,10 @@ public class WorldManager {
             Logger.warn("Unknown level-type \"" + type + "\" in server.properties, so the new level is flat."
                     + " Expected flat or default.");
         }
-        String presetName = config.get("flat-world-preset", FlatPreset.CLASSIC_FLAT.getDisplayName());
+        String presetName = settings.getString("level.preset-type");
         FlatPreset preset = FlatPreset.fromName(presetName);
         if (preset == null) {
-            Logger.warn("Unknown flat-world-preset \"" + presetName + "\" in server.properties, so the new level is "
+            Logger.warn("Unknown level.preset-type \"" + presetName + "\" in netherrack.yml, so the new level is "
                     + FlatPreset.CLASSIC_FLAT.getDisplayName() + ".");
             return FlatPreset.CLASSIC_FLAT;
         }

@@ -88,6 +88,14 @@
             <artifactId>jline-terminal-jni</artifactId>
             <version>3.29.0</version>
         </dependency>
+        <!-- JLine's line reader (BSD-3-Clause, like the rest of JLine) for the console prompt:
+             it reads keys itself, so it knows what's been typed and can draw it again below
+             log lines printed while a command is being typed. -->
+        <dependency>
+            <groupId>org.jline</groupId>
+            <artifactId>jline-reader</artifactId>
+            <version>3.29.0</version>
+        </dependency>
 
         <!-- World storage: Bedrock worlds keep their chunks in a LevelDB database, in Mojang's
              variant that compresses with zlib instead of Snappy. This is a pure Java LevelDB

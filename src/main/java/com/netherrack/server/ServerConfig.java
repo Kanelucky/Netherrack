@@ -2,14 +2,12 @@ package com.netherrack.server;
 
 import com.netherrack.server.setup.Lang;
 import com.netherrack.server.util.Logger;
-import com.netherrack.server.world.FlatPreset;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 import java.util.stream.Collectors;
@@ -61,30 +59,17 @@ public class ServerConfig {
 
     /**
      * Netherrack's own settings, listed after the vanilla ones under their own heading, in
-     * alphabetical order. The language is the one picked in the setup wizard.
+     * alphabetical order. The language is the one picked in the setup wizard. The rest of
+     * Netherrack's own settings are in netherrack.yml (see NetherrackConfig).
      */
     private static List<Setting> customDefaults(String language) {
         String languages = Lang.AVAILABLE.keySet().stream()
                 .map(code -> "\"" + code + "\"")
                 .collect(Collectors.joining(" or "));
-        List<String> names = Arrays.stream(FlatPreset.values())
-                .map(preset -> "\"" + preset.getDisplayName() + "\"")
-                .toList();
-        String presets = String.join(", ", names.subList(0, names.size() - 1)) + ", or " + names.get(names.size() - 1);
         return List.of(
-                new Setting("debug-logs", "false",
-                        "If true, every network packet and other debugging detail is written to logs/latest.log as"
-                                + " well, without showing in the console. Useful when something goes wrong, but the"
-                                + " log grows quickly.",
-                        "Allowed values: \"true\" or \"false\""),
                 new Setting("default-player-permission-level", "member",
                         "Permission level for new players joining for the first time.",
                         "Allowed values: \"visitor\", \"member\", \"operator\""),
-                new Setting("flat-world-preset", FlatPreset.CLASSIC_FLAT.getDisplayName(),
-                        "Which of the game's flat world presets a new flat level is made from, which sets the"
-                                + " blocks of each layer from the bottom of the world up. Only used when level-type is"
-                                + " \"flat\".",
-                        "Allowed values: " + presets),
                 new Setting("language", language,
                         "The language of the server's own messages in the console. Players see the game in the"
                                 + " language they've chosen themselves.",
@@ -92,8 +77,9 @@ public class ServerConfig {
                 new Setting("level-type", "FLAT",
                         "The type of world to create when the level doesn't exist yet. A level that already exists"
                                 + " keeps the type it was created with.",
-                        "Allowed values: \"flat\" (its layers are set by flat-world-preset), or \"default\" for"
-                                + " generated terrain (not available yet: until it is, the world stays empty)",
+                        "Allowed values: \"flat\" (its layers are set by preset-type in netherrack.yml), or"
+                                + " \"default\" for generated terrain (not available yet: until it is, the world"
+                                + " stays empty)",
                         "Commenting this out is the same as \"default\"."),
                 new Setting("op-permission-level", "2",
                         "Which commands operators can use: 0 only the ones every player can, 2 adds commands"
