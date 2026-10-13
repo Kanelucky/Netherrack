@@ -1,5 +1,6 @@
 package com.netherrack.server.entity;
 
+import com.netherrack.server.block.Block;
 import com.netherrack.server.world.World;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
@@ -148,8 +149,9 @@ public class ItemEntity {
         return x != beforeX || y != beforeY || z != beforeZ;
     }
 
-    /** Whether a block stops items - for now, anything but air. */
+    /** Whether a block stops items: a solid one, not air or something to fall through, like a flower or a torch. */
     private static boolean solid(World world, double x, double y, double z) {
-        return world.getBlock((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z)) != null;
+        Block block = world.getBlock((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z));
+        return block != null && block.isSolid();
     }
 }

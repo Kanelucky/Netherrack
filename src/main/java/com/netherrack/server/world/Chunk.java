@@ -103,8 +103,8 @@ public class Chunk {
 
         int x = (chunkX << 4) | (localX & 15);
         int z = (chunkZ << 4) | (localZ & 15);
-        if (blockEntities.removeIf(entity -> entity.getInt("x") == x && entity.getInt("y") == y
-                && entity.getInt("z") == z)) {
+        int worldY = y;
+        if (blockEntities.removeIf(entity -> isAt(entity, x, worldY, z))) {
             blockEntitiesChanged = true;
         }
     }
@@ -169,6 +169,30 @@ public class Chunk {
     public synchronized void setBlockEntities(List<NbtMap> loaded) {
         blockEntities.clear();
         blockEntities.addAll(loaded);
+    }
+
+    /** The block entity of the block at a position in the world, or null if it has none. */
+    public synchronized NbtMap getBlockEntity(int x, int y, int z) {
+        for (NbtMap entity : blockEntities) {
+            if (isAt(entity, x, y, z)) {
+                return entity;
+            }
+        }
+        return null;
+    }
+
+    /** Gives a block its block entity, in place of any it had, at the position the entity says. */
+    public synchronized void setBlockEntity(NbtMap entity) {
+        int x = entity.getInt("x");
+        int y = entity.getInt("y");
+        int z = entity.getInt("z");
+        blockEntities.removeIf(existing -> isAt(existing, x, y, z));
+        blockEntities.add(entity);
+        blockEntitiesChanged = true;
+    }
+
+    private static boolean isAt(NbtMap entity, int x, int y, int z) {
+        return entity.getInt("x") == x && entity.getInt("y") == y && entity.getInt("z") == z;
     }
 
     /** Whether the world's storage has this chunk, or it was generated since the world was loaded. */

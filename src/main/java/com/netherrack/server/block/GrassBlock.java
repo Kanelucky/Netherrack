@@ -11,9 +11,4 @@ public class GrassBlock extends Block {
     public GrassBlock() {
         super("minecraft:grass_block");
     }
-
-    @Override
-    public float getHardness() {
-        return 0.6f;
-    }
 }

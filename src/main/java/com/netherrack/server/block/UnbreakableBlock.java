@@ -6,7 +6,9 @@ import java.util.Set;
 
 /**
  * A block nobody can break outside creative mode: bedrock, barriers, command blocks,
- * portals and the like. Vanilla gives these a hardness of -1.
+ * portals and the like. Vanilla gives these a hardness of -1. The mining data gives most of
+ * them that too, but not all - allow, deny and border blocks, and invisible bedrock, come
+ * as 0 there - so they're listed here as well.
  */
 public class UnbreakableBlock extends Block {
 
@@ -27,7 +29,7 @@ public class UnbreakableBlock extends Block {
     }
 
     @Override
-    public float getHardness() {
+    public double getHardness() {
         return -1;
     }
 }

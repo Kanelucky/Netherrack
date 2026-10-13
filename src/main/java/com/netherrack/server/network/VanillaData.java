@@ -1,6 +1,7 @@
 package com.netherrack.server.network;
 
 import com.netherrack.server.block.Block;
+import com.netherrack.server.block.BlockItems;
 import com.netherrack.server.block.BlockStateHash;
 import com.netherrack.server.util.Logger;
 import org.cloudburstmc.nbt.NbtList;
@@ -23,7 +24,6 @@ import org.cloudburstmc.protocol.common.SimpleDefinitionRegistry;
 import java.awt.Color;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.PushbackInputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -37,9 +37,8 @@ import java.util.Map;
  * protocol exactly, it's not a free choice. The bundled data below is NOT an exact match
  * for that version though, since BedrockData doesn't have a tag that far ahead yet:
  * <p>
- * - canonical_block_states.nbt / entity_identifiers.nbt: from the "bedrock-1.26.30" tag,
- *   the closest available. A couple of patches behind 1.26.50, so some newer blocks or
- *   entities may be missing or show as the unknown/error texture client-side.
+ * - entity_identifiers.nbt: from the "bedrock-1.26.30" tag, the closest available. A
+ *   couple of patches behind 1.26.50, so some newer entities may be missing.
  * - biome_definitions.nbt: still from the older "bedrock-1.21.70" tag - BedrockData
  *   stopped shipping a pre-built raw-NBT biome file in more recent tags (JSON only), and
  *   converting that JSON into the right NBT shape hasn't been done yet. This one's the
@@ -64,20 +63,22 @@ import java.util.Map;
  *   and concrete slabs and stairs, shelf mushrooms...). Behavior packs are the server's,
  *   so the client only knows these blocks if StartGame sends their definitions.
  * <p>
- * canonical_block_states.nbt specifically: every vanilla block state, in a fixed order.
- * StartGame's blockPalette field is set from this, though it turns out that field isn't
- * actually transmitted at all for this protocol version (confirmed by reading the active
- * serializer chain) - harmless to still set, just inert.
+ * block_palette.nbt: every vanilla block state of 1.26.50 exactly, from CloudburstMC's Data
+ * project (https://github.com/CloudburstMC/Data, commit 659ce1e2, Apache 2.0 - see
+ * data/LICENSE-CloudburstMC.txt), unchanged: gzipped big-endian NBT, {"blocks": [{name,
+ * states, version, network_id...}]}. It's what says which states exist - a fence's
+ * connections, stairs' corners - and each block's default state. StartGame's blockPalette
+ * field is set from it, though that field isn't actually transmitted at all for this
+ * protocol version (confirmed by reading the active serializer chain) - harmless to still
+ * set, just inert.
  * <p>
- * Block identity on the wire now uses Bedrock's hashed block network IDs scheme instead
- * (see Block.getBlockStateHash()), not ordinal positions in this palette - that's why
- * getRuntimeId() below is unused. Hashing avoids needing this file's ordering to exactly
- * match the real client's version-for-version, which ordinal IDs required and which an
- * older BedrockData snapshot (1.26.30 vs the client's actual 1.26.50) couldn't guarantee.
+ * Block identity on the wire uses Bedrock's hashed block network IDs scheme (see
+ * Block.getBlockStateHash()), not ordinal positions in this palette - that's why
+ * getRuntimeId() below is unused.
  */
 public final class VanillaData {
 
-    private static final String BLOCK_STATES_RESOURCE = "/data/canonical_block_states.nbt";
+    private static final String BLOCK_STATES_RESOURCE = "/data/block_palette.nbt";
     private static final String ENTITY_IDENTIFIERS_RESOURCE = "/data/entity_identifiers.nbt";
     private static final String BIOME_DEFINITIONS_RESOURCE = "/data/biome_definitions.nbt";
     private static final String ITEM_DEFINITIONS_RESOURCE = "/data/item_definitions.nbt";
@@ -97,6 +98,7 @@ public final class VanillaData {
     // Every block state known by its network hash, and each block's default state by name.
     private final Map<Integer, NbtMap> blockStatesByHash = new HashMap<>();
     private final Map<String, NbtMap> defaultBlockStates = new HashMap<>();
+    private final Map<String, String> itemByPlacedBlock = new HashMap<>();
     private final List<CreativeItemGroup> creativeGroups = new ArrayList<>();
     private final List<CreativeItemData> creativeItems = new ArrayList<>();
     private final List<BlockPropertyData> dataDrivenBlocks = new ArrayList<>();
@@ -126,6 +128,12 @@ public final class VanillaData {
                 placedBlockHashByItem.put(id, hash);
                 blockStatesByHash.put(hash, block);
                 defaultBlockStates.put(block.getString("name"), block);
+                // An item named like its block wins over others that place it too.
+                String blockName = block.getString("name");
+                String itemName = item.getString("name");
+                if (!itemByPlacedBlock.containsKey(blockName) || itemName.equals(blockName)) {
+                    itemByPlacedBlock.put(blockName, itemName);
+                }
             }
         }
         for (NbtMap item : creative.getList("items", NbtType.COMPOUND)) {
@@ -226,11 +234,31 @@ public final class VanillaData {
      * isn't a block item.
      */
     public NbtMap placedBlock(ItemData item) {
+        if (item.getBlockDefinition() != null) {
+            NbtMap carried = blockStatesByHash.get(item.getBlockDefinition().getRuntimeId());
+            if (carried != null) {
+                return carried;
+            }
+        }
         NbtMap usual = placedBlockByItem.get(item.getDefinition().getRuntimeId());
-        if (usual == null || item.getBlockDefinition() == null) {
+        if (usual != null) {
             return usual;
         }
-        return blockStatesByHash.getOrDefault(item.getBlockDefinition().getRuntimeId(), usual);
+        // Doors, beds, seeds, signs and the like don't say in the item data which block they place.
+        String block = BlockItems.blockPlacedBy(item.getDefinition().getIdentifier());
+        return block != null ? defaultBlockStates.get(block) : null;
+    }
+
+    /**
+     * The name of the item that places a block, e.g. "minecraft:repeater" for
+     * "minecraft:unpowered_repeater" - the block's own name if no item says it places it.
+     */
+    public String itemPlacing(String blockName) {
+        String other = BlockItems.itemPlacing(blockName);
+        if (other != null) {
+            return other;
+        }
+        return itemByPlacedBlock.getOrDefault(blockName, blockName);
     }
 
     /** The block state ({"name", "states"}) with this network hash, or null if it's none this version knows. */
@@ -307,7 +335,7 @@ public final class VanillaData {
     }
 
     private static VanillaData load() {
-        NbtList<NbtMap> blockPalette = readRepeatedCompounds(BLOCK_STATES_RESOURCE);
+        NbtList<NbtMap> blockPalette = readPalette(BLOCK_STATES_RESOURCE);
         NbtMap entityIdentifiers = readSingleCompound(ENTITY_IDENTIFIERS_RESOURCE);
         BiomeDefinitions biomeDefinitions = toBiomeDefinitions(readSingleCompound(BIOME_DEFINITIONS_RESOURCE));
         return new VanillaData(blockPalette, entityIdentifiers, biomeDefinitions,
@@ -371,20 +399,25 @@ public final class VanillaData {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private static NbtList<NbtMap> readRepeatedCompounds(String resource) {
-        List<NbtMap> entries = new ArrayList<>();
-        try (PushbackInputStream in = new PushbackInputStream(openResource(resource));
-             var reader = NbtUtils.createNetworkReader(in)) {
-            int next;
-            while ((next = in.read()) != -1) {
-                in.unread(next);
-                entries.add((NbtMap) reader.readTag());
+    /**
+     * Every block state in the palette, as {"name", "states", "version"} - the palette's
+     * other fields (its own ids and hashes) are left out.
+     */
+    private static NbtList<NbtMap> readPalette(String resource) {
+        List<NbtMap> states = new ArrayList<>();
+        try (var reader = NbtUtils.createGZIPReader(openResource(resource))) {
+            NbtMap root = (NbtMap) reader.readTag();
+            for (NbtMap entry : root.getList("blocks", NbtType.COMPOUND)) {
+                states.add(NbtMap.builder()
+                        .putString("name", entry.getString("name"))
+                        .putCompound("states", entry.getCompound("states"))
+                        .putInt("version", entry.getInt("version"))
+                        .build());
             }
         } catch (IOException e) {
             throw new IllegalStateException("Failed to read " + resource, e);
         }
-        return new NbtList<>(NbtType.COMPOUND, entries);
+        return new NbtList<>(NbtType.COMPOUND, states);
     }
 
     private static InputStream openResource(String resource) {

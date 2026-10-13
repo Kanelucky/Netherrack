@@ -4,6 +4,7 @@ import com.netherrack.server.block.Block;
 import com.netherrack.server.network.HashedBlockDefinitions;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.math.vector.Vector3i;
+import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.protocol.bedrock.data.GameType;
 import org.cloudburstmc.protocol.bedrock.data.LevelEvent;
 import org.cloudburstmc.protocol.bedrock.data.SoundEvent;
@@ -13,6 +14,7 @@ import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
 import org.cloudburstmc.protocol.bedrock.packet.AddPlayerPacket;
 import org.cloudburstmc.protocol.bedrock.packet.AnimatePacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import org.cloudburstmc.protocol.bedrock.packet.BlockEntityDataPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LevelEventPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LevelSoundEventPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MobArmorEquipmentPacket;
@@ -209,29 +211,64 @@ public class PlayerManager {
 
     /** Shows every player, the one who made it included, that a block has changed. */
     public void broadcastBlock(Vector3i position, Block block) {
-        UpdateBlockPacket update = blockUpdate(position, block);
-        for (Player player : players.values()) {
-            player.getSession().sendPacket(update);
-        }
+        broadcastAt(center(position), blockUpdate(position, block));
     }
 
-    /** A world effect, such as block cracks or break particles, for every player. */
+    /** Shows every player who can see a block what its block entity keeps, like a bed's color - once the block's there. */
+    public void broadcastBlockEntity(Vector3i position, NbtMap entity) {
+        if (entity == null) {
+            return;
+        }
+        BlockEntityDataPacket packet = new BlockEntityDataPacket();
+        packet.setBlockPosition(position);
+        packet.setData(entity);
+        broadcastAt(center(position), packet);
+    }
+
+    /** A world effect, such as block cracks or break particles, for every player who can see it. */
     public void broadcastLevelEvent(LevelEvent event, Vector3f position, int data) {
-        LevelEventPacket packet = levelEvent(event, position, data);
-        for (Player player : players.values()) {
-            player.getSession().sendPacket(packet);
-        }
+        broadcastAt(position, levelEvent(event, position, data));
     }
 
-    /** The sound of a block being placed, for everyone but the player who placed it. */
-    public void broadcastPlaceSound(Player placer, Vector3f position, Block block) {
+    /**
+     * A block's sound - one being placed, a door opening - for every player who can hear it,
+     * the one who made it included: the client leaves these to the server.
+     *
+     * @param block the block making the sound, which picks the sound's variety (wood, stone...)
+     */
+    public void broadcastSound(SoundEvent event, Vector3f position, Block block) {
         LevelSoundEventPacket sound = new LevelSoundEventPacket();
-        sound.setSound(SoundEvent.PLACE);
+        sound.setSound(event);
         sound.setPosition(position);
-        sound.setExtraData(block.getBlockStateHash());
+        sound.setExtraData(block != null ? block.getBlockStateHash() : -1);
         sound.setIdentifier("");
         sound.setEntityUniqueId(-1);
-        broadcast(placer, sound);
+        broadcastAt(position, sound);
+    }
+
+    /**
+     * A sound a player's client made and sent on - like the block they're mining being hit -
+     * for everyone else who can hear it. Their own client has played it already.
+     */
+    public void relaySound(Player source, LevelSoundEventPacket sound) {
+        for (Player other : others(source)) {
+            if (other.canSee(sound.getPosition())) {
+                other.getSession().sendPacket(sound);
+            }
+        }
+    }
+
+    /** Sends a packet about a place in the world to every player whose client has that place's chunk. */
+    public void broadcastAt(Vector3f position, BedrockPacket packet) {
+        for (Player player : players.values()) {
+            if (player.canSee(position)) {
+                player.getSession().sendPacket(packet);
+            }
+        }
+    }
+
+    private static Vector3f center(Vector3i position) {
+        return Vector3f.from(position.getX() + 0.5, position.getY() + 0.5, position.getZ() + 0.5);
     }
 
     /** Tells a client what block is at a position - used to correct a refused change it predicted. */

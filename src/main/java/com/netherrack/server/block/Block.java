@@ -1,6 +1,7 @@
 package com.netherrack.server.block;
 
 import org.cloudburstmc.nbt.NbtMap;
+import org.cloudburstmc.nbt.NbtMapBuilder;
 
 /**
  * A block state: a block's namespaced id plus its states (which way stairs face, what
@@ -75,12 +76,14 @@ public class Block {
         return blockStateHash;
     }
 
-    /**
-     * Vanilla's hardness value, which sets how long the block takes to break. Blocks
-     * without their own class don't know theirs yet, so they use a typical block's.
-     */
-    public float getHardness() {
-        return 1;
+    /** How the block takes to mining: its hardness, the tool that suits it, and whether it's solid. */
+    public Mining getMining() {
+        return Mining.of(identifier);
+    }
+
+    /** Vanilla's hardness value, which sets how long the block takes to break. */
+    public double getHardness() {
+        return getMining().hardness();
     }
 
     /** Whether it can be broken outside creative mode - not so for a hardness below 0, like bedrock's. */
@@ -88,19 +91,42 @@ public class Block {
         return getHardness() >= 0;
     }
 
-    /** Whether breaking it by hand is the slow, no-drop kind (e.g. stone without a pickaxe). */
-    public boolean requiresTool() {
-        return false;
+    /** Whether it's a whole box to bump into, rather than something to walk through, like a flower. */
+    public boolean isSolid() {
+        return getMining().solid() && !BlockShapes.isReplaceable(this);
+    }
+
+    /** A block state property's value: a Byte for a bit, an Integer or a String. Null if it hasn't got that property. */
+    public Object getProperty(String property) {
+        return states.get(property);
+    }
+
+    public boolean hasProperty(String property) {
+        return states.containsKey(property);
+    }
+
+    /** Whether a bit property is set. */
+    public boolean isSet(String property) {
+        return states.get(property) instanceof Byte value && value == 1;
     }
 
     /**
-     * How many ticks breaking this by hand takes, by vanilla's formula: hardness times 1.5
-     * seconds, or times 5 when the block needs a tool. Only used to animate other
-     * players' view of the cracks - the breaking player's own client times the break.
+     * The same block with some properties changed, or null if the game has no such state.
+     *
+     * @param changes property names and values, in turn: a Byte for a bit (see {@link #bit}),
+     *                an Integer or a String
      */
-    public int getHandBreakTicks() {
-        float seconds = getHardness() * (requiresTool() ? 5f : 1.5f);
-        return Math.max(1, Math.round(seconds * 20));
+    public Block with(Object... changes) {
+        NbtMapBuilder changed = states.toBuilder();
+        for (int i = 0; i < changes.length; i += 2) {
+            changed.put((String) changes[i], changes[i + 1]);
+        }
+        return Blocks.find(identifier, changed.build());
+    }
+
+    /** A bit property's value, which block states keep as a byte. */
+    public static Byte bit(boolean set) {
+        return (byte) (set ? 1 : 0);
     }
 
     @Override

@@ -1,5 +1,6 @@
 package com.netherrack.server.block;
 
+import com.netherrack.server.network.VanillaData;
 import org.cloudburstmc.nbt.NbtMap;
 
 import java.util.List;
@@ -47,6 +48,26 @@ public final class Blocks {
         NbtMap states = state.getCompound("states", NbtMap.EMPTY);
         return BY_STATE.computeIfAbsent(key(name, states),
                 key -> UnbreakableBlock.isUnbreakable(name) ? new UnbreakableBlock(state) : new Block(state));
+    }
+
+    /**
+     * The block with this name and these states, or null if the game has no such state -
+     * say, a property set to a value that block doesn't take.
+     */
+    public static Block find(String name, NbtMap states) {
+        NbtMap key = key(name, states);
+        Block known = BY_STATE.get(key);
+        if (known != null) {
+            return known;
+        }
+        NbtMap state = VanillaData.get().blockState(BlockStateHash.of(key));
+        return state != null && name.equals(state.getString("name")) ? of(state) : null;
+    }
+
+    /** A block's default state by name, or null if the game has no block by that name. */
+    public static Block byName(String name) {
+        NbtMap state = VanillaData.get().defaultBlockState(name);
+        return find(name, state.getCompound("states", NbtMap.EMPTY));
     }
 
     private static NbtMap key(String name, NbtMap states) {

@@ -5,6 +5,7 @@ import com.netherrack.server.util.Logger;
 import com.netherrack.server.world.storage.WorldStorage;
 import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.nbt.NbtMap;
+import org.cloudburstmc.nbt.NbtMapBuilder;
 
 import java.io.IOException;
 import java.util.Map;
@@ -100,6 +101,25 @@ public class World {
 
     public void setBlock(int x, int y, int z, Block block) {
         getChunk(x >> 4, z >> 4).setBlock(x & 15, y, z & 15, block);
+    }
+
+    /** The block entity of the block at a position - a bed's color, a banner's patterns - or null if it has none. */
+    public NbtMap getBlockEntity(Vector3i position) {
+        return getChunk(position.getX() >> 4, position.getZ() >> 4)
+                .getBlockEntity(position.getX(), position.getY(), position.getZ());
+    }
+
+    /**
+     * Gives the block at a position its block entity, which says what it is ("id") and what
+     * it keeps; where it is ("x", "y", "z") is added here. Setting the block afterwards takes
+     * it away again.
+     */
+    public void setBlockEntity(Vector3i position, NbtMap entity) {
+        NbtMapBuilder placed = entity.toBuilder();
+        placed.putInt("x", position.getX());
+        placed.putInt("y", position.getY());
+        placed.putInt("z", position.getZ());
+        getChunk(position.getX() >> 4, position.getZ() >> 4).setBlockEntity(placed.build());
     }
 
     /** Whether a chunk is in memory: loaded or generated, and not unloaded since. */
