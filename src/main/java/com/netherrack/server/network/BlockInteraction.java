@@ -1,41 +1,57 @@
 package com.netherrack.server.network;
 
 import com.netherrack.server.block.Block;
+import com.netherrack.server.block.BlockBreaking;
+import com.netherrack.server.block.BlockDrops;
+import com.netherrack.server.block.BlockEntities;
+import com.netherrack.server.block.BlockPlacement;
+import com.netherrack.server.block.BlockShapes;
+import com.netherrack.server.block.BlockUse;
 import com.netherrack.server.block.Blocks;
+import com.netherrack.server.block.Face;
+import com.netherrack.server.block.Placer;
 import com.netherrack.server.entity.ItemEntities;
+import com.netherrack.server.player.Permission;
 import com.netherrack.server.player.Player;
 import com.netherrack.server.player.PlayerInventory;
 import com.netherrack.server.player.PlayerManager;
 import com.netherrack.server.util.Logger;
+import com.netherrack.server.util.Scheduler;
 import com.netherrack.server.world.World;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.math.vector.Vector3i;
+import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.protocol.bedrock.data.LevelEvent;
 import org.cloudburstmc.protocol.bedrock.data.PlayerBlockActionData;
+import org.cloudburstmc.protocol.bedrock.data.SoundEvent;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerId;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
+import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.ItemUseTransaction;
 import org.cloudburstmc.protocol.bedrock.packet.InventorySlotPacket;
 import org.cloudburstmc.protocol.bedrock.packet.InventoryTransactionPacket;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Players breaking and placing blocks.
+ * Players breaking, placing and using blocks.
  * <p>
- * Both are predicted by the client: it shows the change straight away and tells the
- * server what it did. The server checks it's allowed, applies it to the world and shows
- * everyone else - or, when it isn't allowed, tells the client what's really there so its
- * prediction is undone.
+ * All are predicted by the client: it shows the change straight away and tells the server
+ * what it did. The server checks it's allowed, applies it to the world (by the rules in
+ * BlockPlacement, BlockBreaking and BlockUse) and shows everyone who can see it - or, when
+ * it isn't allowed, tells the client what's really there so its prediction is undone.
  * <p>
  * Breaking in survival is timed by the client (StartGame turns on server-authoritative
- * block breaking, so the client reports each stage in PlayerAuthInput). The cracks and
- * the break particles are the server's to show though - to everyone, the breaking player
- * included, whose client draws neither itself in this mode. Placing uses the block item
- * the player holds, one of which is used up.
+ * block breaking, so the client reports each stage in PlayerAuthInput). The cracks, the
+ * break particles and the sounds of placing and using blocks are the server's to show
+ * though - to everyone, the player included, whose client leaves them to the server in
+ * this mode. A block broken in survival drops what it drops for what the player holds.
+ * Placing uses the block item the player holds, one of which is used up; a bed, banner or
+ * head keeps what its item says of its looks - a color, patterns - in a block entity.
  * <p>
  * In creative, the first hit breaks a block and nothing drops, and placing uses nothing up.
- * Visitors and adventure-mode players may do neither - their clients are told so, but the
- * server checks too, since a client can't be trusted to.
+ * Visitors, and players in adventure or spectator mode, may not build - their clients are
+ * told so, but the server checks too, since a client can't be trusted to.
  * <p>
  * There's one of these per player, since it keeps track of the block they're breaking.
  */
@@ -50,28 +66,23 @@ public class BlockInteraction {
     private static final int MIN_Y = -64;
     private static final int MAX_Y = 319;
 
-    /** Clicked block face to the direction a placed block goes from it: down, up, north, south, west, east. */
-    private static final Vector3i[] FACE_OFFSETS = {
-            Vector3i.from(0, -1, 0), Vector3i.from(0, 1, 0),
-            Vector3i.from(0, 0, -1), Vector3i.from(0, 0, 1),
-            Vector3i.from(-1, 0, 0), Vector3i.from(1, 0, 0)
-    };
-
-    /** Half a player's width, and their height standing - the box a placed block mustn't overlap. */
+    /** Half a player's width, and their height standing - the box a solid placed block mustn't overlap. */
     private static final double PLAYER_HALF_WIDTH = 0.3;
     private static final double PLAYER_HEIGHT = 1.8;
 
     private final World world;
     private final PlayerManager players;
     private final ItemEntities itemEntities;
+    private final Scheduler scheduler;
 
     /** The block this player is cracking, or null if they aren't breaking anything. */
     private Vector3i breaking;
 
-    public BlockInteraction(World world, PlayerManager players, ItemEntities itemEntities) {
+    public BlockInteraction(World world, PlayerManager players, ItemEntities itemEntities, Scheduler scheduler) {
         this.world = world;
         this.players = players;
         this.itemEntities = itemEntities;
+        this.scheduler = scheduler;
     }
 
     /** The block actions from one PlayerAuthInput: starting, stopping and finishing breaks. */
@@ -98,35 +109,107 @@ public class BlockInteraction {
         }
     }
 
-    /** A right click on a block with the held item: places it against the clicked face. */
-    public void handleItemUse(Player player, InventoryTransactionPacket packet) {
+    /**
+     * A right click on a block with the held item: uses the block if it's one that's used
+     * (a door, a lever...), unless the player sneaks; otherwise places the held block
+     * against the clicked face. Returns false if neither happened because the player holds
+     * an item that isn't a block, which might be used some other way, like armor put on.
+     * <p>
+     * The client reports clicks it found do nothing as well - while the button's held down,
+     * every frame - having changed nothing for them, and nothing happens for them here
+     * either. Otherwise a block it found wouldn't fit, like one at the player's feet, would
+     * be placed anyway, and a carved pumpkin also worn, as the client falls back to that.
+     */
+    public boolean handleItemUse(Player player, InventoryTransactionPacket packet) {
         Vector3i clicked = packet.getBlockPosition();
-        int face = packet.getBlockFace();
+        Face face = Face.of(packet.getBlockFace());
         int slot = packet.getHotbarSlot();
-        if (face < 0 || face >= FACE_OFFSETS.length || slot < 0 || slot >= PlayerInventory.HOTBAR_SIZE) {
-            return;
+        if (face == null || slot < 0 || slot >= PlayerInventory.HOTBAR_SIZE
+                || packet.getClientInteractPrediction() == ItemUseTransaction.PredictedResult.FAILURE) {
+            return true;
         }
-        Vector3i target = clicked.add(FACE_OFFSETS[face]);
+        Vector3i target = face.from(clicked);
+        Block clickedBlock = world.getBlock(clicked.getX(), clicked.getY(), clicked.getZ());
 
-        String refusal = placementRefusal(player, packet, clicked, target);
-        if (refusal != null) {
-            Logger.debug(player.getUsername() + " could not place a block at " + target + ": " + refusal);
-            // Undo whatever the client predicted, block and item count both.
-            player.getSession().sendPacket(PlayerManager.blockUpdate(target, blockAt(target)));
-            player.getSession().sendPacket(PlayerManager.blockUpdate(clicked, blockAt(clicked)));
-            sendSlot(player, slot, player.getInventory().get(slot));
-            return;
+        // Adventure mode can't build, but can still use doors and switches; visitors and spectators can't.
+        boolean mayUse = !player.isSpectator() && player.getPermission() != Permission.VISITOR;
+        if (!player.isSneaking() && mayUse && BlockUse.isUsable(clickedBlock) && withinReach(player, clicked)) {
+            BlockUse.Used used = BlockUse.use(world, clicked, Face.facing(player.getRotation().getY()));
+            if (used != null) {
+                showUse(used);
+                // The client may have predicted placing its block, which didn't happen.
+                undo(player, slot, target);
+                return true;
+            }
+        }
+        if (!player.isSneaking() && BlockUse.opensOnClick(clickedBlock)) {
+            undo(player, slot, target, clicked);
+            return true; // what clicking it opens isn't done yet, but it never places anything
         }
 
-        // The block state the held item carries: e.g. which colour of wool, or a slab's half.
         ItemData held = player.getInventory().get(slot);
-        Block block = Blocks.of(VanillaData.get().placedBlock(held));
-        world.setBlock(target.getX(), target.getY(), target.getZ(), block);
-        players.broadcastBlock(target, block);
-        players.broadcastPlaceSound(player, center(target), block);
+        if (!held.isNull() && VanillaData.get().placedBlock(held) == null) {
+            return false;
+        }
+        String refusal = placementRefusal(player, packet, held, clicked);
+        List<BlockPlacement.Placed> placed = List.of();
+        Placer placer = Placer.of(player.getPosition(), player.getRotation().getY(), player.isSneaking());
+        if (refusal == null) {
+            float clickY = packet.getClickPosition() != null ? packet.getClickPosition().getY() : 0;
+            placed = BlockPlacement.plan(world, Blocks.of(VanillaData.get().placedBlock(held)), clicked, face, clickY,
+                    placer);
+            if (placed.isEmpty()) {
+                refusal = "there's no room, or nothing to hold the block";
+            } else if (blockedByPlayer(placed)) {
+                refusal = "a player is in the way";
+                placed = List.of();
+            }
+        }
+        if (refusal != null) {
+            Logger.debug(player.getUsername() + " could not place a block against " + clicked + ": " + refusal);
+            undo(player, slot, target, clicked);
+            return true;
+        }
+
+        List<Vector3i> changed = new ArrayList<>();
+        List<Vector3i> withEntities = new ArrayList<>();
+        for (BlockPlacement.Placed block : placed) {
+            Vector3i at = block.position();
+            world.setBlock(at.getX(), at.getY(), at.getZ(), block.block());
+            NbtMap entity = BlockEntities.forPlaced(block.block(), held, placer);
+            if (entity != null) {
+                world.setBlockEntity(at, entity);
+                withEntities.add(at);
+            }
+            changed.add(at);
+        }
+        BlockBreaking.Changes settled = BlockBreaking.settle(world, changed);
+        changed.addAll(settled.reshaped());
+        for (BlockBreaking.Broken broken : settled.broken()) {
+            changed.add(broken.position());
+        }
+        for (Vector3i at : changed) {
+            players.broadcastBlock(at, blockAt(at));
+        }
+        for (Vector3i at : withEntities) {
+            players.broadcastBlockEntity(at, world.getBlockEntity(at));
+        }
+        showBroken(settled.broken(), null, player.isCreative(), null);
+        showSounds(settled.sounds());
+        updateLater(settled.later());
+        BlockPlacement.Placed first = placed.get(0);
+        players.broadcastSound(SoundEvent.PLACE, center(first.position()), first.block());
         if (!player.isCreative()) {
             sendSlot(player, slot, player.getInventory().useOne(slot));
         }
+        // The client may have predicted its block somewhere else - beside grass the server
+        // replaced, say - so whatever it put there that didn't happen is put back.
+        for (Vector3i predicted : List.of(target, clicked)) {
+            if (!changed.contains(predicted)) {
+                player.getSession().sendPacket(PlayerManager.blockUpdate(predicted, blockAt(predicted)));
+            }
+        }
+        return true;
     }
 
     /** A creative player's instant break, which their client reports as its own action. */
@@ -136,34 +219,35 @@ public class BlockInteraction {
         }
     }
 
-    /** Why the placement can't happen, or null if it can. */
-    private String placementRefusal(Player player, InventoryTransactionPacket packet, Vector3i clicked, Vector3i target) {
+    /** Why the placement can't happen, or null if nothing stops it yet. */
+    private String placementRefusal(Player player, InventoryTransactionPacket packet, ItemData held, Vector3i clicked) {
         if (!player.mayBuild()) {
             return "they may not build";
         }
-        ItemData held = player.getInventory().get(packet.getHotbarSlot());
         if (held.isNull() || packet.getItemInHand() == null || packet.getItemInHand().getDefinition() == null
                 || held.getDefinition().getRuntimeId() != packet.getItemInHand().getDefinition().getRuntimeId()) {
             return "the client holds something else";
         }
-        if (VanillaData.get().placedBlock(held) == null) {
-            return "the held item doesn't place a block";
-        }
-        if (!inWorld(target) || !withinReach(player, target)) {
+        if (!inWorld(clicked) || !withinReach(player, clicked)) {
             return "out of reach";
         }
-        if (world.getBlock(clicked.getX(), clicked.getY(), clicked.getZ()) == null) {
-            return "the clicked block is air";
-        }
-        if (world.getBlock(target.getX(), target.getY(), target.getZ()) != null) {
-            return "something is already there";
-        }
-        for (Player other : players.getPlayers()) {
-            if (insidePlayer(other, target)) {
-                return other.getUsername() + " is standing there";
+        return null;
+    }
+
+    /** Whether a block about to be placed would be inside a player who isn't spectating, where they'd bump into it. */
+    private boolean blockedByPlayer(List<BlockPlacement.Placed> placed) {
+        for (BlockPlacement.Placed block : placed) {
+            BlockShapes.Box box = BlockShapes.collisionBox(block.block());
+            if (box == null) {
+                continue;
+            }
+            for (Player other : players.getPlayers()) {
+                if (!other.isSpectator() && insidePlayer(other, block.position(), box)) {
+                    return true;
+                }
             }
         }
-        return null;
+        return false;
     }
 
     private void startBreaking(Player player, Vector3i position) {
@@ -177,8 +261,8 @@ public class BlockInteraction {
         }
         breaking = position;
         // The data is how far the cracks advance each tick, out of 65535 for a full break.
-        int perTick = 65535 / block.getHandBreakTicks();
-        players.broadcastLevelEvent(LevelEvent.BLOCK_START_BREAK, center(position), perTick);
+        int ticks = Math.max(1, block.getMining().breakTicks(heldName(player)));
+        players.broadcastLevelEvent(LevelEvent.BLOCK_START_BREAK, center(position), 65535 / ticks);
     }
 
     /** Clears the cracks from the block the player was breaking, if any - when they let go, finish or leave. */
@@ -191,26 +275,113 @@ public class BlockInteraction {
 
     private void breakBlock(Player player, Vector3i position) {
         Block block = world.getBlock(position.getX(), position.getY(), position.getZ());
-        if (block == null || !player.mayBuild() || !inWorld(position) || !withinReach(player, position)
-                || (!block.isBreakable() && !player.isCreative())) {
-            Logger.debug(player.getUsername() + " could not break the block at " + position);
+        if (block == null) {
+            // Air is what a break leaves, so this is a break the client has already reported another way.
+            return;
+        }
+        String refusal = null;
+        if (!player.mayBuild()) {
+            refusal = "they may not build";
+        } else if (!inWorld(position) || !withinReach(player, position)) {
+            refusal = "out of reach";
+        } else if (!block.isBreakable() && !player.isCreative()) {
+            refusal = block.getIdentifier() + " only breaks in creative";
+        }
+        if (refusal != null) {
+            Logger.debug(player.getUsername() + " could not break the block at " + position + ": " + refusal);
             stopBreaking();
-            player.getSession().sendPacket(PlayerManager.blockUpdate(position, blockAt(position)));
+            player.getSession().sendPacket(PlayerManager.blockUpdate(position, block));
             return;
         }
 
-        world.setBlock(position.getX(), position.getY(), position.getZ(), null);
         stopBreaking();
-        players.broadcastBlock(position, Blocks.AIR);
-        // The break particles and sound, telling the client which block it was.
-        players.broadcastLevelEvent(LevelEvent.PARTICLE_DESTROY_BLOCK, center(position), block.getBlockStateHash());
-
-        // Outside creative, the block's own item pops out. Vanilla's rules differ for some
-        // blocks (grass drops dirt, stone-like blocks need a pickaxe), but Netherrack doesn't
-        // have per-block drops or tools yet.
-        if (!player.isCreative()) {
-            itemEntities.dropFromBlock(position, VanillaData.get().blockItem(block, 1));
+        BlockBreaking.Changes changes = BlockBreaking.breakBlock(world, position);
+        for (BlockBreaking.Broken broken : changes.broken()) {
+            players.broadcastBlock(broken.position(), Blocks.AIR);
         }
+        for (Vector3i reshaped : changes.reshaped()) {
+            players.broadcastBlock(reshaped, blockAt(reshaped));
+        }
+        showBroken(changes.broken(), position, player.isCreative(), heldName(player));
+        showSounds(changes.sounds());
+        updateLater(changes.later());
+    }
+
+    /**
+     * A tick from now, makes the changes blocks wait a tick for - scaffolding breaking or
+     * taking its new distance - and shows them, then goes on to any they lead to. What breaks
+     * then drops whatever it drops, as nobody broke it.
+     */
+    private void updateLater(List<Vector3i> later) {
+        if (later.isEmpty()) {
+            return;
+        }
+        scheduler.schedule(1, () -> {
+            BlockBreaking.Changes changes = BlockBreaking.updateLater(world, later);
+            for (BlockBreaking.Broken broken : changes.broken()) {
+                players.broadcastBlock(broken.position(), Blocks.AIR);
+            }
+            for (Vector3i reshaped : changes.reshaped()) {
+                players.broadcastBlock(reshaped, blockAt(reshaped));
+            }
+            showBroken(changes.broken(), null, false, null);
+            showSounds(changes.sounds());
+            updateLater(changes.later());
+        });
+    }
+
+    /** Plays the sounds blocks made as they changed shape, like a tripwire hook clicking. */
+    private void showSounds(List<BlockBreaking.Sound> sounds) {
+        for (BlockBreaking.Sound sound : sounds) {
+            players.broadcastSound(sound.event(), center(sound.position()), sound.block());
+        }
+    }
+
+    /**
+     * The break particles and sound of each block that broke, and outside creative, what it
+     * drops: the block broken by hand drops for what the player holds; blocks that went with
+     * it, like a torch that was on it, drop whatever they drop.
+     */
+    private void showBroken(List<BlockBreaking.Broken> broken, Vector3i brokenByHand, boolean creative, String held) {
+        for (BlockBreaking.Broken block : broken) {
+            players.broadcastLevelEvent(LevelEvent.PARTICLE_DESTROY_BLOCK, center(block.position()),
+                    block.block().getBlockStateHash());
+            if (creative) {
+                continue;
+            }
+            boolean byHand = block.position().equals(brokenByHand);
+            for (ItemData drop : BlockDrops.of(block.block(), block.blockEntity(), byHand ? held : null, byHand)) {
+                itemEntities.dropFromBlock(block.position(), drop);
+            }
+        }
+    }
+
+    /** Shows everyone a block being used, and lets a pressed button pop back out in time. */
+    private void showUse(BlockUse.Used used) {
+        for (Vector3i at : used.changed()) {
+            players.broadcastBlock(at, blockAt(at));
+        }
+        if (used.sound() != null && !used.changed().isEmpty()) {
+            Vector3i at = used.changed().get(0);
+            players.broadcastSound(used.sound(), center(at), blockAt(at));
+        }
+        if (used.releaseIn() != null && !used.changed().isEmpty()) {
+            Vector3i button = used.changed().get(0);
+            scheduler.schedule(used.releaseIn(), () -> {
+                if (BlockUse.releaseButton(world, button)) {
+                    players.broadcastBlock(button, blockAt(button));
+                    players.broadcastSound(SoundEvent.BUTTON_CLICK_OFF, center(button), blockAt(button));
+                }
+            });
+        }
+    }
+
+    /** Puts back what the client predicted: the blocks it may have changed, and the item it may have used. */
+    private void undo(Player player, int slot, Vector3i... positions) {
+        for (Vector3i position : positions) {
+            player.getSession().sendPacket(PlayerManager.blockUpdate(position, blockAt(position)));
+        }
+        sendSlot(player, slot, player.getInventory().get(slot));
     }
 
     private void sendSlot(Player player, int slot, ItemData item) {
@@ -219,6 +390,12 @@ public class BlockInteraction {
         packet.setSlot(slot);
         packet.setItem(item);
         player.getSession().sendPacket(packet);
+    }
+
+    /** The name of the item in the player's hand, or null if it's empty. */
+    private static String heldName(Player player) {
+        ItemData held = player.getInventory().get(player.getSelectedSlot());
+        return held.isNull() || held.getDefinition() == null ? null : held.getDefinition().getIdentifier();
     }
 
     private Block blockAt(Vector3i position) {
@@ -234,11 +411,14 @@ public class BlockInteraction {
         return player.getPosition().distanceSquared(center(position)) <= MAX_REACH * MAX_REACH;
     }
 
-    private static boolean insidePlayer(Player player, Vector3i block) {
+    /** Whether a player overlaps the part of a block's space a box takes up. */
+    private static boolean insidePlayer(Player player, Vector3i block, BlockShapes.Box box) {
         Vector3f feet = player.getFeetPosition();
-        return feet.getX() + PLAYER_HALF_WIDTH > block.getX() && feet.getX() - PLAYER_HALF_WIDTH < block.getX() + 1
-                && feet.getY() + PLAYER_HEIGHT > block.getY() && feet.getY() < block.getY() + 1
-                && feet.getZ() + PLAYER_HALF_WIDTH > block.getZ() && feet.getZ() - PLAYER_HALF_WIDTH < block.getZ() + 1;
+        return feet.getX() + PLAYER_HALF_WIDTH > block.getX() + box.minX()
+                && feet.getX() - PLAYER_HALF_WIDTH < block.getX() + box.maxX()
+                && feet.getY() + PLAYER_HEIGHT > block.getY() + box.minY() && feet.getY() < block.getY() + box.maxY()
+                && feet.getZ() + PLAYER_HALF_WIDTH > block.getZ() + box.minZ()
+                && feet.getZ() - PLAYER_HALF_WIDTH < block.getZ() + box.maxZ();
     }
 
     private static Vector3f center(Vector3i position) {

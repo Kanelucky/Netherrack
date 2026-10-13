@@ -44,6 +44,7 @@ import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.ItemSt
 import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.InventoryActionData;
 import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.InventorySource;
 import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.InventoryTransactionType;
+import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.ItemUseTransaction;
 import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.LegacySetItemSlotData;
 import org.cloudburstmc.protocol.bedrock.data.skin.SerializedSkin;
 import org.cloudburstmc.nbt.NbtMap;
@@ -68,6 +69,7 @@ import org.cloudburstmc.protocol.bedrock.packet.ItemStackRequestPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ItemStackResponsePacket;
 import org.cloudburstmc.protocol.bedrock.packet.JigsawStructureDataPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MobEquipmentPacket;
+import org.cloudburstmc.protocol.bedrock.packet.LevelSoundEventPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LoginPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkSettingsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerActionPacket;
@@ -130,6 +132,9 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
     /** The smallest view a player gets, whatever their client asks for. */
     private static final int MIN_CHUNK_RADIUS = 2;
 
+    /** How far from a player's eyes the sounds they make can be: a little beyond what they reach. */
+    private static final float SOUND_REACH = 16;
+
     private final BedrockServerSession session;
     private final World world;
     private final PlayerManager players;
@@ -159,7 +164,7 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
         this.players = players;
         this.netherrack = netherrack;
         this.itemEntities = netherrack.getItemEntities();
-        this.blockInteraction = new BlockInteraction(world, players, itemEntities);
+        this.blockInteraction = new BlockInteraction(world, players, itemEntities, netherrack.getScheduler());
         this.chunkViews = netherrack.getChunkViews();
         this.chunkView = new ChunkView(session, world);
     }
@@ -526,6 +531,22 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
     }
 
     /**
+     * A sound the client made and plays itself, like the block its player is mining being
+     * hit, for the players around to hear too. One from further than the player could
+     * plausibly make it goes nowhere.
+     */
+    @Override
+    public PacketSignal handle(LevelSoundEventPacket packet) {
+        Vector3f position = packet.getPosition();
+        if (player != null && position != null && Float.isFinite(position.getX()) && Float.isFinite(position.getY())
+                && Float.isFinite(position.getZ())
+                && position.distanceSquared(player.getPosition()) <= SOUND_REACH * SOUND_REACH) {
+            players.relaySound(player, packet);
+        }
+        return PacketSignal.HANDLED;
+    }
+
+    /**
      * A message typed in chat. A leading "/" runs it as a server command (through the same
      * CommandManager the console uses) instead of broadcasting it - so "/stop" in chat does
      * the same thing as typing "stop" in the console. Anything else is broadcast to every
@@ -578,8 +599,9 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
 
     /**
      * Using the held item (an "item use" transaction): a right click on a block (action
-     * type 0) places the held block against it, and using armor - in the air (action type
-     * 1) or on a block - puts it on, as vanilla does.
+     * type 0) uses the block or places the held block against it, and using armor - in the
+     * air (action type 1), or on a block when it isn't a block itself - puts it on, as
+     * vanilla does. A carved pumpkin or a head is put on only from the air.
      * <p>
      * A "normal" transaction is the client throwing items out from the hotbar (pressing
      * Q), which it has already done on its side: one action takes the items out of an
@@ -603,10 +625,13 @@ public class NetherrackPacketHandler implements BedrockPacketHandler {
                 && (packet.getActionType() == 0 || packet.getActionType() == 1)) {
             int heldId = packet.getItemInHand() != null && packet.getItemInHand().getDefinition() != null
                     ? packet.getItemInHand().getDefinition().getRuntimeId() : 0;
-            if (inventory.equipHeld(packet.getHotbarSlot(), heldId)) {
+            // On a block, a block item - a carved pumpkin or a head too - is placed, and a
+            // block that's used is used; only otherwise is what's held put on, and only when
+            // the client found that works too.
+            boolean onBlockDone = packet.getActionType() == 0 && blockInteraction.handleItemUse(player, packet);
+            boolean predictedToWork = packet.getClientInteractPrediction() != ItemUseTransaction.PredictedResult.FAILURE;
+            if (!onBlockDone && predictedToWork && inventory.equipHeld(packet.getHotbarSlot(), heldId)) {
                 changedInventory = true;
-            } else if (packet.getActionType() == 0) {
-                blockInteraction.handleItemUse(player, packet);
             }
         } else if (packet.getTransactionType() == InventoryTransactionType.NORMAL) {
             throwFromHotbar(packet.getActions());

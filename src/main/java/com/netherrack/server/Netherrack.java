@@ -12,6 +12,7 @@ import com.netherrack.server.command.VersionCommand;
 import com.netherrack.server.entity.ItemEntities;
 import com.netherrack.server.network.ChunkViews;
 import com.netherrack.server.network.RakNetServer;
+import com.netherrack.server.network.TripwireSensor;
 import com.netherrack.server.player.GameModes;
 import com.netherrack.server.player.Permission;
 import com.netherrack.server.player.Permissions;
@@ -23,6 +24,7 @@ import com.netherrack.server.setup.SetupWizard;
 import com.netherrack.server.util.AnsiSupport;
 import com.netherrack.server.util.Logger;
 import com.netherrack.server.util.NettyLogBridge;
+import com.netherrack.server.util.Scheduler;
 import com.netherrack.server.world.World;
 import com.netherrack.server.world.WorldManager;
 
@@ -52,6 +54,8 @@ public class Netherrack {
     private World world;
     private ItemEntities itemEntities;
     private ChunkViews chunkViews;
+    private TripwireSensor tripwires;
+    private final Scheduler scheduler = new Scheduler();
     private Permissions permissions;
     private ScheduledExecutorService ticker;
     private ScheduledExecutorService autosave;
@@ -109,6 +113,11 @@ public class Netherrack {
 
     public ItemEntities getItemEntities() {
         return itemEntities;
+    }
+
+    /** Things to do some ticks from now, like a pressed button popping back out. */
+    public Scheduler getScheduler() {
+        return scheduler;
     }
 
     public ChunkViews getChunkViews() {
@@ -189,6 +198,7 @@ public class Netherrack {
         Logger.info(lang.get("server.opening", ip, port));
         itemEntities = new ItemEntities(world, playerManager);
         chunkViews = new ChunkViews(world);
+        tripwires = new TripwireSensor(world, playerManager);
         startTicking();
         rakNetServer.start(world, playerManager, this);
 
@@ -304,9 +314,9 @@ public class Netherrack {
 
     /**
      * Runs the world 20 times a second, as vanilla does: everything that changes on its
-     * own over time, such as dropped items falling and being picked up, players getting
-     * the chunks around them as they move, and the players and items in those chunks
-     * appearing to them. A tick that throws
+     * own over time, such as dropped items falling and being picked up, tripwire pressed by
+     * the players walking through it, players getting the chunks around them as they move,
+     * and the players and items in those chunks appearing to them. A tick that throws
      * is logged and the next one runs anyway - an uncaught exception would otherwise stop
      * the schedule for good.
      */
@@ -316,6 +326,8 @@ public class Netherrack {
             try {
                 // Chunks first, so what's shown below goes by the chunks clients have now.
                 chunkViews.tick();
+                scheduler.tick();
+                tripwires.tick();
                 itemEntities.tick();
                 playerManager.updateVisibility();
                 playerManager.updateEquipment();

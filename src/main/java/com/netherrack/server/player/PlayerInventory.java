@@ -187,7 +187,8 @@ public class PlayerInventory {
     /**
      * Puts on the armor held in a hotbar slot, as using it does, swapping it with whatever
      * was worn there - if the slot holds the item the client says it does, and it's worn.
-     * Returns whether it was put on.
+     * An armor slot holds just one: from a stack, like carved pumpkins, one is put on and the
+     * rest stay in hand, and only if nothing's worn there already. Returns whether it was put on.
      */
     public synchronized boolean equipHeld(int slot, int itemId) {
         if (slot < 0 || slot >= HOTBAR_SIZE) {
@@ -200,6 +201,14 @@ public class PlayerInventory {
         int armorSlot = armorSlot(held.getDefinition().getIdentifier());
         if (armorSlot < 0) {
             return false;
+        }
+        if (held.getCount() > 1) {
+            if (!armor[armorSlot].isNull()) {
+                return false;
+            }
+            armor[armorSlot] = withCount(held, 1, nextNetId++);
+            main[slot] = removed(held, 1);
+            return true;
         }
         main[slot] = armor[armorSlot];
         armor[armorSlot] = held;
