@@ -92,7 +92,7 @@ The project started as a server-software simulation and is gradually being turne
 - [x] Grass block
 - [x] Cobblestone block
 - [ ] Complete world system
-- [ ] Chunk loading and generation
+- [x] Chunk loading and generation
 - [x] Client connection to a Bedrock client
 - [ ] Complete Bedrock play/login flow
 - [ ] Entity system
