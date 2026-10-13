@@ -318,6 +318,7 @@ public class Netherrack {
                 chunkViews.tick();
                 itemEntities.tick();
                 playerManager.updateVisibility();
+                playerManager.updateEquipment();
             } catch (Exception e) {
                 Logger.error("Error during the server tick: " + e);
             }

@@ -229,6 +229,11 @@ public class PlayerInventory {
         return new ItemStackResponse(ItemStackResponseStatus.OK, requestId, describe(touched));
     }
 
+    /** What's in the offhand, for other players to see. */
+    public synchronized ItemData getOffhand() {
+        return offhand;
+    }
+
     /** What the player wears - helmet, chestplate, leggings, boots - for other players to see. */
     public synchronized List<ItemData> getArmor() {
         return List.of(armor);
