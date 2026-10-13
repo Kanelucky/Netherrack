@@ -1,5 +1,6 @@
 package com.netherrack.server.player;
 
+import com.netherrack.server.network.ChunkView;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
 import org.cloudburstmc.protocol.bedrock.data.Ability;
@@ -19,6 +20,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * One connected player: who they are, how others should see them, and where they are.
@@ -57,6 +59,9 @@ public class Player {
     private volatile Vector3f rotation = Vector3f.ZERO;
     private volatile boolean sneaking;
     private volatile int selectedSlot;
+    private volatile ChunkView chunkView;
+    // The other players and items this player's client is showing, by entity id.
+    private final Set<Long> shownEntities = ConcurrentHashMap.newKeySet();
     private volatile GameType gameMode;
     private volatile Permission permission = Permission.MEMBER;
     private volatile int commandLevel;
@@ -275,6 +280,32 @@ public class Player {
     /** Which hotbar slot (0-8) the player has selected. */
     public int getSelectedSlot() {
         return selectedSlot;
+    }
+
+    /** The chunks this player's client has, which decide what else it's shown. */
+    public void setChunkView(ChunkView chunkView) {
+        this.chunkView = chunkView;
+    }
+
+    /** Whether this player's client has the chunk at this position, so it can be shown what's there. */
+    public boolean canSee(Vector3f position) {
+        ChunkView view = chunkView;
+        return view != null && view.has(position.getFloorX() >> 4, position.getFloorZ() >> 4);
+    }
+
+    /** Whether this player's client is showing an entity: another player or an item. */
+    public boolean isShowing(long entityId) {
+        return shownEntities.contains(entityId);
+    }
+
+    /** Notes that the client is now showing an entity; false if it already was. */
+    public boolean startShowing(long entityId) {
+        return shownEntities.add(entityId);
+    }
+
+    /** Notes that the client no longer shows an entity; false if it wasn't. */
+    public boolean stopShowing(long entityId) {
+        return shownEntities.remove(entityId);
     }
 
     public void setSelectedSlot(int selectedSlot) {

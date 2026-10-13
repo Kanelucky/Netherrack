@@ -25,9 +25,10 @@ import java.util.concurrent.ThreadLocalRandom;
  * Every item lying in the world. The server tick moves them, lets players pick them up
  * and removes them after 5 minutes, as vanilla does.
  * <p>
- * Every player is shown every item, since every player is sent the same chunks around
- * spawn. Items are spawned from players' network threads and ticked on the server
- * thread, so everything here is synchronized.
+ * Each player is shown the items in the chunks their client has, as vanilla does: items
+ * appear as they come into a player's view and go as they leave it, and their movement
+ * only goes to those who can see them. Items are spawned from players' network threads
+ * and ticked on the server thread, so everything here is synchronized.
  */
 public class ItemEntities {
 
@@ -75,14 +76,10 @@ public class ItemEntities {
         spawn(item, position, velocity, THROWN_PICKUP_DELAY);
     }
 
-    /** Shows a player who has just joined every item already lying around. */
-    public synchronized void showAll(Player player) {
-        for (ItemEntity item : items.values()) {
-            player.getSession().sendPacket(addPacket(item));
-        }
-    }
-
-    /** One server tick: ages, moves and removes items, then lets players pick them up. */
+    /**
+     * One server tick: ages, moves and removes items, lets players pick them up, then shows
+     * each player the items that have come into their view and stops showing those that left.
+     */
     public synchronized void tick() {
         tick++;
         Iterator<ItemEntity> iterator = items.values().iterator();
@@ -96,12 +93,12 @@ public class ItemEntities {
             item.age();
             if (item.getAge() >= LIFETIME || item.getPosition().getY() < VOID_Y) {
                 iterator.remove();
-                players.sendToAll(removePacket(item));
+                hideFromEveryone(item);
                 continue;
             }
             if (item.step(world)) {
-                players.sendToAll(movePacket(item));
-                players.sendToAll(motionPacket(item));
+                sendToShowing(item, movePacket(item));
+                sendToShowing(item, motionPacket(item));
             }
         }
 
@@ -110,11 +107,16 @@ public class ItemEntities {
                 pickUp(player);
             }
         }
+
+        for (ItemEntity item : items.values()) {
+            updateVisibility(item);
+        }
     }
 
     /**
      * Picks up the items within the player's reach, as much of each as fits in their
-     * inventory. Everyone sees the item fly to the player; what's left stays on the ground.
+     * inventory. Everyone who can see it sees the item fly to the player; what's left
+     * stays on the ground.
      */
     private void pickUp(Player player) {
         boolean picked = false;
@@ -134,15 +136,16 @@ public class ItemEntities {
             TakeItemEntityPacket take = new TakeItemEntityPacket();
             take.setItemRuntimeEntityId(item.getEntityId());
             take.setRuntimeEntityId(player.getEntityId());
-            players.sendToAll(take);
+            sendToShowing(item, take);
 
             // Taking an item removes it on clients, so what's left is shown again as a new stack.
-            players.sendToAll(removePacket(item));
             if (left == 0) {
                 iterator.remove();
+                hideFromEveryone(item);
             } else {
+                sendToShowing(item, removePacket(item));
                 item.setItem(item.getItem().toBuilder().count(left).build());
-                players.sendToAll(addPacket(item));
+                sendToShowing(item, addPacket(item));
             }
         }
         if (picked) {
@@ -160,7 +163,40 @@ public class ItemEntities {
         ItemData onGround = item.toBuilder().usingNetId(false).netId(0).build();
         ItemEntity entity = new ItemEntity(EntityIds.next(), onGround, position, velocity, pickupDelay);
         items.put(entity.getEntityId(), entity);
-        players.sendToAll(addPacket(entity));
+        updateVisibility(entity);
+    }
+
+    /**
+     * Shows an item to the players whose clients have its chunk, and stops showing it to
+     * those whose clients don't any more.
+     */
+    private void updateVisibility(ItemEntity item) {
+        for (Player player : players.getPlayers()) {
+            boolean visible = player.canSee(item.getPosition());
+            if (visible && player.startShowing(item.getEntityId())) {
+                player.getSession().sendPacket(addPacket(item));
+            } else if (!visible && player.stopShowing(item.getEntityId())) {
+                player.getSession().sendPacket(removePacket(item));
+            }
+        }
+    }
+
+    /** Takes an item that's gone off every client showing it. */
+    private void hideFromEveryone(ItemEntity item) {
+        for (Player player : players.getPlayers()) {
+            if (player.stopShowing(item.getEntityId())) {
+                player.getSession().sendPacket(removePacket(item));
+            }
+        }
+    }
+
+    /** Sends something about an item to the players whose clients are showing it. */
+    private void sendToShowing(ItemEntity item, BedrockPacket packet) {
+        for (Player player : players.getPlayers()) {
+            if (player.isShowing(item.getEntityId())) {
+                player.getSession().sendPacket(packet);
+            }
+        }
     }
 
     /**
