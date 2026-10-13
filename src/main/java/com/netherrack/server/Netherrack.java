@@ -22,18 +22,19 @@ import com.netherrack.server.player.PlayerManager;
 import com.netherrack.server.setup.Lang;
 import com.netherrack.server.setup.SetupWizard;
 import com.netherrack.server.util.AnsiSupport;
+import com.netherrack.server.util.Console;
 import com.netherrack.server.util.Logger;
 import com.netherrack.server.util.NettyLogBridge;
 import com.netherrack.server.util.Scheduler;
 import com.netherrack.server.world.World;
 import com.netherrack.server.world.WorldManager;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.nio.file.Files;
 import org.cloudburstmc.protocol.bedrock.data.GameType;
+import org.jline.reader.UserInterruptException;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -47,6 +48,7 @@ public class Netherrack {
     private static final long AUTOSAVE_SECONDS = 30;
 
     private final ServerConfig config;
+    private final NetherrackConfig settings;
     private final RakNetServer rakNetServer;
     private final PlayerManager playerManager = new PlayerManager();
     private final WorldManager worldManager;
@@ -64,8 +66,9 @@ public class Netherrack {
 
     public Netherrack() {
         this.config = new ServerConfig(Path.of("server.properties"));
+        this.settings = new NetherrackConfig(NetherrackConfig.FILE);
         this.rakNetServer = new RakNetServer(config);
-        this.worldManager = new WorldManager(config);
+        this.worldManager = new WorldManager(config, settings);
 
         this.commandManager = new CommandManager();
         commandManager.register(new StopCommand());
@@ -165,11 +168,11 @@ public class Netherrack {
         config.load(language);
         Lang.current = new Lang(config.get("language", language));
         Lang lang = Lang.current;
+        settings.load(config);
 
         permissions = Permissions.load(Permissions.FILE, defaultPermission());
 
-        // "debug" is what the setting was called before, so older files still work.
-        NettyLogBridge.setDebug(config.getBoolean("debug-logs", config.getBoolean("debug", false)));
+        NettyLogBridge.setDebug(settings.getBoolean("logs.debug"));
         if (NettyLogBridge.isDebug()) {
             Logger.warn(lang.get("server.debug_enabled"));
         }
@@ -215,27 +218,39 @@ public class Netherrack {
         runConsoleLoop();
     }
 
+    /**
+     * Runs the commands typed at the console, one line at a time. Ctrl+C at the prompt stops
+     * the server as the stop command does. If the console's input runs out, as piped input
+     * can, the server runs on without it.
+     */
     private void runConsoleLoop() {
-        Logger.bindConsoleThread(Thread.currentThread());
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
-            while (running) {
-                System.out.print("> ");
-                System.out.flush();
-                Logger.notePromptShown();
-                String line = reader.readLine();
-                Logger.notePromptConsumed();
-                if (line == null) {
-                    continue;
-                }
-                commandManager.dispatch(this, ConsoleCommandSender.INSTANCE, line.trim());
+        Console.open(AnsiSupport.getTerminal());
+        while (running) {
+            String line;
+            try {
+                line = Console.readLine();
+            } catch (UserInterruptException e) {
+                shutdown();
+                return;
+            } catch (RuntimeException e) {
+                Logger.error("Console loop terminated: " + e.getMessage());
+                return;
             }
-        } catch (Exception e) {
-            Logger.error("Console loop terminated: " + e.getMessage());
+            if (line == null) {
+                Logger.warn(Lang.current.get("server.console_closed"));
+                return;
+            }
+            commandManager.dispatch(this, ConsoleCommandSender.INSTANCE, line.trim());
         }
     }
 
     public void shutdown() {
         Logger.info(Lang.current.get("server.stopping"));
+        // Players see why they were let go, rather than losing the connection.
+        String message = settings.getString("messages.server-shutdown");
+        for (Player player : List.copyOf(playerManager.getPlayers())) {
+            player.getSession().disconnect(message);
+        }
         sleep(200);
         rakNetServer.stop();
         ticker.shutdownNow();

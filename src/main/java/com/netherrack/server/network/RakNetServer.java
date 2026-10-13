@@ -71,7 +71,7 @@ public class RakNetServer {
                         Logger.info("Incoming RakNet connection from " + remote.getAddress().getHostAddress() + ":" + remote.getPort());
 
                         // Logs every packet in and out of this session (at trace level, so
-                        // only visible with debug=true).
+                        // only visible with debug logging on in netherrack.yml).
                         session.setLogging(NettyLogBridge.isDebug());
 
                         NetherrackPacketHandler handler = new NetherrackPacketHandler(session, world, players, netherrack);

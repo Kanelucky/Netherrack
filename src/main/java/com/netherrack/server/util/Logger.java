@@ -16,9 +16,9 @@ import java.time.format.DateTimeFormatter;
  * each segment (timestamp, thread name, level) is colored.
  * <p>
  * Every line is also written, uncolored, to a log file once {@link #openLogFile(Path)} has
- * been called. DEBUG lines go only to that file: with debug=true the network libraries log
- * every packet, which buries everything else on the console and scrolls past what the
- * console keeps.
+ * been called. DEBUG lines go only to that file: with debug logging on, the network
+ * libraries log every packet, which buries everything else on the console and scrolls past
+ * what the console keeps.
  */
 public final class Logger {
 
@@ -32,36 +32,9 @@ public final class Logger {
     private static final String ERROR_COLOR = "\u001B[1;31m";
     private static final String DEBUG_COLOR = null;
 
-    private static volatile Thread consoleThread = null;
-    private static volatile boolean promptActive = false;
     private static PrintWriter logFile = null;
 
     private Logger() {
-    }
-
-    /**
-     * Marks the given thread as the one that owns the console prompt (i.e. the thread
-     * blocked in readLine()). Any log call from a different thread will redraw the
-     * prompt after itself, since it would otherwise print in the middle of it.
-     */
-    public static void bindConsoleThread(Thread thread) {
-        consoleThread = thread;
-    }
-
-    /**
-     * Called right after the prompt ("> ") has been printed and before the console
-     * thread blocks on readLine(), so other threads know a prompt is currently showing.
-     */
-    public static void notePromptShown() {
-        promptActive = true;
-    }
-
-    /**
-     * Called right after the console thread receives a line, so the prompt is no
-     * longer considered "on screen" until it's printed again.
-     */
-    public static void notePromptConsumed() {
-        promptActive = false;
     }
 
     /**
@@ -119,17 +92,7 @@ public final class Logger {
         }
         line.append(']');
         line.append(' ').append(message);
-
-        boolean redrawPrompt = promptActive && Thread.currentThread() != consoleThread;
-        if (redrawPrompt) {
-            // Erase the currently-displayed "> " prompt (carriage return + clear line)
-            // so it doesn't get absorbed as a prefix to this log line.
-            System.out.print("\r\u001B[K");
-        }
-        System.out.println(line);
-        if (redrawPrompt) {
-            System.out.print("> ");
-            System.out.flush();
-        }
+        // Above the console's prompt, which is drawn again below it with whatever's been typed.
+        Console.print(line.toString());
     }
 }

@@ -15,7 +15,7 @@ import java.io.StringWriter;
  * with no backend behind it and every library message (errors included) is discarded.
  * <p>
  * Info, warnings and errors are always shown. Debug and trace are only shown when
- * "debug=true" is set in server.properties, and only from the CloudburstMC libraries -
+ * debug is true under logs in netherrack.yml, and only from the CloudburstMC libraries -
  * Netty's own debug output is a dump of its internal settings, not useful for debugging
  * Netherrack. The one exception: the packet codec only reports packets that fail to encode
  * or decode at debug level, and those failures are otherwise completely silent (the packet
