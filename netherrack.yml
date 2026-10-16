@@ -1,0 +1,15 @@
+logs:
+  # If true, every network packet and other debugging detail is written to logs/latest.log as well, without showing in the console. Useful when something goes wrong, but the log grows quickly.
+  # Allowed values: true or false
+  debug: false
+
+messages:
+  # What the players still on the server are shown when it closes.
+  server-shutdown: "Server closed"
+  # What a player who isn't on the whitelist is shown as they're turned away.
+  server-whitelist: "You are not whitelisted on this server!"
+
+level:
+  # Which of the game's flat world presets a new flat level is made from, which sets the blocks of each layer from the bottom of the world up. Only used when level-type in server.properties is "flat".
+  # Allowed values: "Classic Flat", "Tunneler's Dream", "Water World", "Overworld", "Snowy Kingdom", "Bottomless Pit", "Desert", "Redstone Ready", or "The Void"
+  preset-type: "Classic Flat"

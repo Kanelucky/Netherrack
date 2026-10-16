@@ -16,8 +16,8 @@ public final class BlockShapes {
      * one half of tall grass or a large fern takes the other half away too.
      */
     private static final Set<String> REPLACEABLE = Set.of(
-            "minecraft:air", "minecraft:water", "minecraft:flowing_water", "minecraft:lava", "minecraft:flowing_lava",
-            "minecraft:fire", "minecraft:soul_fire", "minecraft:short_grass", "minecraft:fern", "minecraft:tall_grass",
+            "minecraft:air", BlockID.WATER, BlockID.FLOWING_WATER, BlockID.LAVA, BlockID.FLOWING_LAVA,
+            "minecraft:fire", BlockID.SOUL_FIRE, BlockID.SHORT_GRASS, "minecraft:fern", "minecraft:tall_grass",
             "minecraft:large_fern", "minecraft:deadbush", "minecraft:bush", "minecraft:short_dry_grass",
             "minecraft:tall_dry_grass", "minecraft:seagrass", "minecraft:crimson_roots", "minecraft:warped_roots",
             "minecraft:nether_sprouts", "minecraft:hanging_roots", "minecraft:glow_lichen", "minecraft:sculk_vein",
